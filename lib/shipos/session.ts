@@ -13,7 +13,7 @@ import {
 } from './storage';
 
 // Preferred Phase 2 view types (map from hash)
-export type ShiposView = 'portal' | 'founder' | 'campus' | 'scout' | 'ops';
+export type ShiposView = 'portal' | 'founder' | 'campus' | 'scout' | 'ops' | 'firm';
 
 const VIEW_MAP: Record<ShiposView, string> = {
   portal: '#shipos',
@@ -21,6 +21,7 @@ const VIEW_MAP: Record<ShiposView, string> = {
   campus: '#shipos/campus',
   scout: '#shipos/scout',
   ops: '#shipos/ops',
+  firm: '#shipos/firm',
 };
 
 const REVERSE_MAP: Record<string, ShiposView> = {
@@ -33,6 +34,7 @@ const REVERSE_MAP: Record<string, ShiposView> = {
   'scout': 'scout',
   'ops': 'ops',
   'ops-console': 'ops',
+  'firm': 'firm',
 };
 
 export function parseShiposViewFromHash(): ShiposView | null {
@@ -92,6 +94,7 @@ export function ensureDemoSessionForView(view: ShiposView): { profileId: string;
     campus: { role: 'campus_lead', email: 'jordan.hale@stanford.edu' },
     scout: { role: 'scout', email: 'sam.patel@mit.edu' },
     ops: { role: 'ops', email: 'ops@ship.vc' },
+    firm: { role: 'investor', email: 'partners@foundersvc.com' },
   };
 
   const info = roleMap[view];

@@ -197,6 +197,52 @@ export interface ShipSession {
   createdAt: string;
 }
 
+// V1 Productization additions
+export interface PartnerOffer {
+  id: string;
+  title: string;
+  category: string;
+  eligibility: string; // e.g. "founder accepted" or "traction > 10"
+  description: string;
+  actionLabel: string;
+  locked: boolean;
+}
+
+export interface NewsletterPost {
+  id: string;
+  title: string;
+  summary: string;
+  category: string; // founder, campus, scout, ops
+  publishedAt: string;
+  content: string; // simple text for V1
+}
+
+export interface DeliveryPacket {
+  id: string;
+  month: string;
+  firmId?: string;
+  founders: string[]; // profile or lead ids
+  status: "draft" | "composed" | "sent";
+  createdAt: string;
+}
+
+export interface DeliverySignal {
+  id: string;
+  packetId: string;
+  targetId: string; // founder/lead
+  signal: "pass" | "interested" | "want_intro";
+  notes?: string;
+  at: string;
+}
+
+export interface IntroRequest {
+  id: string;
+  firmId: string;
+  targetId: string;
+  status: "requested" | "intro_made" | "declined";
+  requestedAt: string;
+}
+
 // Phase 5 productization: additional purposeful entities
 export type CellStatus =
   | "application_submitted"

@@ -383,6 +383,11 @@ export let campusScouts: any[] = [];
 export let tractionSignals: any[] = [];
 export let weeklyCheckIns: any[] = [];
 export let opsNotes: any[] = [];
+export let partnerOffers: any[] = [];
+export let newsletterPosts: any[] = [];
+export let deliveryPackets: any[] = [];
+export let deliverySignals: any[] = [];
+export let introRequests: any[] = [];
 
 const DB_KEY = "shipos_mock_db_v1";
 
@@ -406,6 +411,11 @@ function persistMockDb(): void {
         tractionSignals,
         weeklyCheckIns,
         opsNotes,
+        partnerOffers,
+        newsletterPosts,
+        deliveryPackets,
+        deliverySignals,
+        introRequests,
       })
     );
   } catch {
@@ -458,6 +468,11 @@ function loadOrSeed(): void {
       tractionSignals = Array.isArray(saved.tractionSignals) ? saved.tractionSignals : [];
       weeklyCheckIns = Array.isArray(saved.weeklyCheckIns) ? saved.weeklyCheckIns : [];
       opsNotes = Array.isArray(saved.opsNotes) ? saved.opsNotes : [];
+      partnerOffers = Array.isArray(saved.partnerOffers) ? saved.partnerOffers : [];
+      newsletterPosts = Array.isArray(saved.newsletterPosts) ? saved.newsletterPosts : [];
+      deliveryPackets = Array.isArray(saved.deliveryPackets) ? saved.deliveryPackets : [];
+      deliverySignals = Array.isArray(saved.deliverySignals) ? saved.deliverySignals : [];
+      introRequests = Array.isArray(saved.introRequests) ? saved.introRequests : [];
       return;
     }
   } catch {
@@ -479,7 +494,31 @@ function loadOrSeed(): void {
   tractionSignals = [];
   weeklyCheckIns = [];
   opsNotes = [];
+  partnerOffers = [];
+  newsletterPosts = [];
+  deliveryPackets = [];
+  deliverySignals = [];
+  introRequests = [];
   persistMockDb();
+
+  // Seed some V1 partner offers and newsletter for demo (only if no saved)
+  if (partnerOffers.length === 0) {
+    partnerOffers = [
+      { id: 'offer_aws', title: 'AWS Credits', category: 'infra', eligibility: 'founder accepted or traction', description: '$5k credits for founders in cohort.', actionLabel: 'Request Access', locked: false },
+      { id: 'offer_design', title: 'Design Partner Intro', category: 'design', eligibility: 'active cell or scout lead', description: 'Intro to top design partners.', actionLabel: 'Request Intro', locked: true },
+    ];
+  }
+  if (newsletterPosts.length === 0) {
+    newsletterPosts = [
+      { id: 'post_1', title: 'Founder Memo: Distribution First', summary: 'Why organic channels beat paid for early validation.', category: 'founder', publishedAt: '2026-06-01', content: 'Focus on owned channels...' },
+      { id: 'post_2', title: 'Campus Scout Playbook', summary: 'How to find and qualify 5 high-signal founders per month.', category: 'campus', publishedAt: '2026-06-02', content: 'Lunch with builders...' },
+    ];
+  }
+  if (deliveryPackets.length === 0) {
+    deliveryPackets = [
+      { id: 'delivery_june', month: '2026-06', firmId: 'firm_foundersvc', founders: ['prof_founder_001'], status: 'composed', createdAt: '2026-06-10' },
+    ];
+  }
 }
 
 // Initialize immediately on module load

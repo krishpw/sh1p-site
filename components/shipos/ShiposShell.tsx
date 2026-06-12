@@ -11,6 +11,7 @@ import { ApplicationSummaryCard } from './ApplicationSummaryCard';
 import { SignalSubmitPanel } from './SignalSubmitPanel';
 import { LocalReviewQueue } from './LocalReviewQueue';
 import { MissingInfoPanel } from './MissingInfoPanel';
+import { FirmPortal } from './FirmPortal';
 
 import type { ActivityEvent, ShipApplication } from '@/types/shipos';
 import {
@@ -45,6 +46,9 @@ import {
   founderLeads as mockLeads,
   campusCells,
   persistMockDb,
+  partnerOffers,
+  newsletterPosts,
+  deliveryPackets,
 } from '@/data/mockShipos';
 
 interface ShiposShellProps {
@@ -487,18 +491,23 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
     currentView === 'founder' ? 'FOUNDER ROUTE' :
     currentView === 'campus' ? 'CAMPUS CELL' :
     currentView === 'scout' ? 'SCOUT SIGNAL' :
-    currentView === 'ops' ? 'SHIP OPS' : 'PORTAL';
+    currentView === 'ops' ? 'SHIP OPS' :
+    currentView === 'firm' ? 'FIRM PORTAL' : 'PORTAL';
 
   const statusText =
     currentView === 'founder' ? 'ROUTE UNDER REVIEW' :
     currentView === 'campus' ? 'CELL FORMING' :
     currentView === 'scout' ? 'RHYTHM ACTIVE' :
-    currentView === 'ops' ? 'DISPATCH LIVE' : 'DEMO LAYER';
+    currentView === 'ops' ? 'DISPATCH LIVE' :
+    currentView === 'firm' ? 'PREVIEW MODE' : 'DEMO LAYER';
 
   const profileLabel = realEmail;
 
   // === Render content using real application data ===
   const renderMain = () => {
+    if (currentView === 'firm') {
+      return <FirmPortal />;
+    }
     if (currentView === 'portal') {
       return <ShiposPortal onNavigate={navigate} />;
     }
@@ -556,6 +565,20 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
           <div className="text-xs font-mono text-white/40 border-l-2 border-[#FFB800]/40 pl-4">
             This is the live Founder Route Hub wired to your submitted application. All CTAs create real persisted activity and update your local graph.
           </div>
+
+          {/* Purposeful: Partner Offers / Perks - eligibility based on status */}
+          <div className="border border-white/10 bg-[#0A0A0A]/70 p-7">
+            <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-3">PARTNER OFFERS (ELIGIBILITY DRIVEN)</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              {partnerOffers.length ? partnerOffers.map((o: any) => (
+                <div key={o.id} className="border border-white/10 p-3 text-sm">
+                  <div className="font-medium">{o.title}</div>
+                  <div className="text-xs text-white/50">{o.description}</div>
+                  <button onClick={() => { /* would call repo request */ alert('Request logged. Would appear in Ops activity.'); }} className="mt-2 text-xs border border-[#FFB800] px-2 py-1">{o.actionLabel}</button>
+                </div>
+              )) : <div className="text-white/50 text-sm">No offers loaded (demo). In full, loaded from partnerOffers repo based on your status.</div>}
+            </div>
+          </div>
         </div>
       );
     }
@@ -604,6 +627,16 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
           <div className="text-[10px] font-mono text-white/40">Your sourced leads appear in the Ops review queue (persisted).</div>
 
           <ShiposActivityTimeline events={scoutActivities.length ? scoutActivities : allActivities} max={5} title="SCOUT LOG" />
+
+          {/* Purposeful: Resources / Newsletter - relevant to scout */}
+          <div className="border border-white/10 bg-[#0A0A0A]/70 p-7">
+            <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-3">RESOURCES & NEWSLETTER (RELEVANT TO YOUR ROUTE)</div>
+            {newsletterPosts.length ? newsletterPosts.filter((p: any) => p.category === 'campus' || p.category === 'scout').map((p: any) => (
+              <div key={p.id} className="mb-2 text-sm cursor-pointer" onClick={() => alert(p.content + ' (read logged in full system)')}>
+                {p.title} — {p.summary}
+              </div>
+            )) : <div className="text-white/50 text-sm">Resources loaded from newsletterPosts (demo).</div>}
+          </div>
         </div>
       );
     }
@@ -637,6 +670,17 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
         <div>
           <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-3">LOCAL REVIEW QUEUE (PERSISTED REAL SUBMISSIONS)</div>
           <LocalReviewQueue applications={allApps} onRefresh={forceRefresh} />
+        </div>
+
+        {/* Purposeful: Monthly Delivery Preview in Ops */}
+        <div>
+          <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-3">MONTHLY DELIVERY PREVIEW (COMPOSE FROM INVESTOR-READY)</div>
+          <div className="border border-white/10 bg-[#0A0A0A]/70 p-6 text-sm">
+            {deliveryPackets.length ? deliveryPackets.map((p: any) => (
+              <div key={p.id}>Packet {p.month}: {p.founders.length} founders • Status {p.status} (edit in full Ops to compose from ready leads)</div>
+            )) : <div>No packet yet. Use investor-ready leads to compose (demo: see Firm Portal).</div>}
+            <div className="text-xs text-white/40 mt-2">In V1, Ops selects from ready, firm sees in portal, signals flow back.</div>
+          </div>
         </div>
 
         <ShiposActivityTimeline events={allActivities} max={8} title="OPS ACTIVITY LOG" />

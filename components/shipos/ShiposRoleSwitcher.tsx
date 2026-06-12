@@ -13,6 +13,7 @@ const ROLES: Array<{ view: ShiposView; label: string; short: string }> = [
   { view: 'campus', label: 'CAMPUS', short: 'ROUTE 02' },
   { view: 'scout', label: 'SCOUT', short: 'ROUTE 03' },
   { view: 'ops', label: 'OPS', short: 'INTERNAL' },
+  { view: 'firm', label: 'FIRM', short: 'PREVIEW' },
 ];
 
 export const ShiposRoleSwitcher: React.FC<ShiposRoleSwitcherProps> = ({ current, onNavigate }) => {
