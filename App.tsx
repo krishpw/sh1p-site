@@ -30,6 +30,36 @@ export default function App() {
     }
   }, [loading]);
 
+  // SHIPOS Phase 2/3 — hash-based internal routing (moved early so ALL hooks run before any conditional JSX)
+  // Safe fallback: unknown hashes default to 'portal' (overview) instead of blank / crash
+  const getSafeShiposView = () => {
+    if (typeof window === 'undefined') return null;
+    const v = parseShiposViewFromHash();
+    if (!v) return null;
+    const validViews = ['portal', 'founder', 'campus', 'scout', 'ops'];
+    return validViews.includes(v) ? v : 'portal';
+  };
+
+  const [shiposView, setShiposView] = useState<string | null>(() => getSafeShiposView());
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      const safeV = getSafeShiposView();
+      setShiposView(safeV);
+    };
+    syncFromHash();
+    window.addEventListener('hashchange', syncFromHash);
+    return () => window.removeEventListener('hashchange', syncFromHash);
+  }, []);
+
+  const exitToPublic = () => {
+    setShiposView(null);
+    if (typeof window !== 'undefined') {
+      const cleanUrl = window.location.pathname + window.location.search;
+      window.history.replaceState(null, '', cleanUrl);
+    }
+  };
+
   // MOUSE PHYSICS (Haptic Feel)
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
@@ -50,6 +80,13 @@ export default function App() {
   const spotX = useTransform(xSpring, [-0.5, 0.5], ["0%", "100%"]);
   const spotY = useTransform(ySpring, [-0.5, 0.5], ["0%", "100%"]);
 
+  // Spotlight background style — hoisted so the useTransform hook is ALWAYS called
+  // (prevents "Rendered fewer hooks" crash when conditionally rendering public vs SHIPOS branch)
+  const spotlightBackground = useTransform(
+      [spotX, spotY],
+      ([x, y]) => `radial-gradient(600px circle at ${x} ${y}, rgba(255,255,255,0.15), transparent 40%)`
+  );
+
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       // Normalize mouse coordinates to -0.5 to 0.5
@@ -63,29 +100,6 @@ export default function App() {
     window.addEventListener('mousemove', handleMouseMove);
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, [mouseX, mouseY]);
-
-  // SHIPOS Phase 2 — hash-based internal routing (zero effect on public when absent)
-  const [shiposView, setShiposView] = useState<string | null>(() =>
-    typeof window === 'undefined' ? null : parseShiposViewFromHash()
-  );
-
-  useEffect(() => {
-    const syncFromHash = () => {
-      const v = parseShiposViewFromHash();
-      setShiposView(v);
-    };
-    syncFromHash();
-    window.addEventListener('hashchange', syncFromHash);
-    return () => window.removeEventListener('hashchange', syncFromHash);
-  }, []);
-
-  const exitToPublic = () => {
-    setShiposView(null);
-    if (typeof window !== 'undefined') {
-      const cleanUrl = window.location.pathname + window.location.search;
-      window.history.replaceState(null, '', cleanUrl);
-    }
-  };
 
   return (
     <div className="relative min-h-screen w-full flex flex-col bg-background antialiased selection:bg-[#FFB800]/20 selection:text-white overflow-hidden">
@@ -112,10 +126,7 @@ export default function App() {
           <motion.div 
             className="fixed inset-0 z-30 pointer-events-none mix-blend-screen"
             style={{
-                background: useTransform(
-                    [spotX, spotY],
-                    ([x, y]) => `radial-gradient(600px circle at ${x} ${y}, rgba(255,255,255,0.15), transparent 40%)`
-                )
+                background: spotlightBackground
             }}
           />
 
