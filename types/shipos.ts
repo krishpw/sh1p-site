@@ -196,3 +196,55 @@ export interface ShipSession {
   email: string;
   createdAt: string;
 }
+
+// Phase 5 productization: additional purposeful entities
+export type CellStatus =
+  | "application_submitted"
+  | "cell_forming"
+  | "scout_recruiting"
+  | "active"
+  | "high_signal";
+
+export interface ScoutRecord {
+  id: string;
+  name: string;
+  email: string;
+  roleFocus?: string;
+  campusCellId: string;
+  createdAt: string;
+}
+
+export interface WeeklyCheckIn {
+  id: string;
+  campusLeadProfileId: string;
+  weekOf: string;
+  conversations: number;
+  events: number;
+  strongestSignal: string;
+  blocker?: string;
+  createdAt: string;
+}
+
+export interface OpsNote {
+  id: string;
+  targetType: "application" | "lead";
+  targetId: string;
+  note: string;
+  decisionReason?: string;
+  nextStep?: string;
+  authorId: string;
+  at: string;
+}
+
+export interface TractionUpdate {
+  id: string;
+  profileId: string;
+  type: string;
+  value: string;
+  link?: string;
+  note?: string;
+  createdAt: string;
+}
+
+// Update CampusCell to use richer status
+// (existing interface kept for compat; status can be CellStatus string)

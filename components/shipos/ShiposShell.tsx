@@ -58,12 +58,18 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
   const [tick, setTick] = useState(0);
   const [localMessage, setLocalMessage] = useState<string | null>(null);
 
-  // Phase 4 action panels
+  // Phase 4/5 action panels and forms
   const [showLeadPanel, setShowLeadPanel] = useState(false);
   const [showTractionPanel, setShowTractionPanel] = useState(false);
   const [showProfilePanel, setShowProfilePanel] = useState(false);
+  const [showRecruitPanel, setShowRecruitPanel] = useState(false);
+  const [recruitForm, setRecruitForm] = useState({ name: '', email: '', roleFocus: '' });
+  const [showWeeklyPanel, setShowWeeklyPanel] = useState(false);
+  const [weeklyForm, setWeeklyForm] = useState({ conversations: 0, events: 0, strongestSignal: '', blocker: '' });
+  const [opsNote, setOpsNote] = useState({ text: '', decisionReason: '', nextStep: '' });
+  const [selectedTarget, setSelectedTarget] = useState<{type: string, id: string} | null>(null);
 
-  // Demo interactive state for campus (scout count starts at 0 for real handoff users)
+  // Interactive state seeded from real data
   const [scoutCount, setScoutCount] = useState(0);
 
   const forceRefresh = () => setTick((t) => t + 1);
@@ -72,7 +78,205 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
     setTimeout(() => setLocalMessage(null), 2400);
   };
 
-  // === Phase 4: Resolve REAL application from public handoff ===
+  // === Phase 5 purposeful action handlers (every action serves status/next/capture/move/record/progress) ===
+
+  const handleRecruitScout = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!recruitForm.name.trim() || !recruitForm.email.trim()) return;
+
+    const newScout = {
+      id: `scout_${Date.now()}`,
+      name: recruitForm.name.trim(),
+      email: recruitForm.email.trim(),
+      roleFocus: recruitForm.roleFocus.trim() || 'general',
+      campusCellId: currentCell?.id || 'cell',
+      createdAt: new Date().toISOString(),
+    };
+    (campusScouts as any).push(newScout);
+
+    if (currentCell) {
+      currentCell.scouts = [...(currentCell.scouts || []), newScout.id];
+      currentCell.status = computeCellStage(currentCell.scouts.length, myLeads.length) as any;
+    }
+
+    persistMockDb();
+
+    createActivityEvent({
+      actorProfileId: currentProfileId,
+      actorRole: 'campus_lead',
+      type: 'scout_recruited',
+      targetType: 'cell',
+      targetId: currentCell?.id || 'cell',
+      payload: { scout: newScout.name, school: realSchool },
+      visibleTo: ['ops', 'campus_lead'],
+    });
+
+    setScoutCount((currentCell?.scouts?.length || 0));
+    setRecruitForm({ name: '', email: '', roleFocus: '' });
+    setShowRecruitPanel(false);
+    forceRefresh();
+    showToast(`Scout ${newScout.name} recruited. Cell progressing.`);
+  };
+
+  const handleWeeklyCheckIn = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const checkin = {
+      id: `checkin_${Date.now()}`,
+      campusLeadProfileId: currentProfileId,
+      weekOf: new Date().toISOString().slice(0,10),
+      conversations: weeklyForm.conversations || 0,
+      events: weeklyForm.events || 0,
+      strongestSignal: weeklyForm.strongestSignal.trim(),
+      blocker: weeklyForm.blocker.trim() || undefined,
+      createdAt: new Date().toISOString(),
+    };
+    (weeklyCheckIns as any).push(checkin);
+    persistMockDb();
+
+    createActivityEvent({
+      actorProfileId: currentProfileId,
+      actorRole: 'campus_lead',
+      type: 'weekly_checkin',
+      targetType: 'cell',
+      targetId: currentCell?.id || currentProfileId,
+      payload: { ...checkin },
+      visibleTo: ['ops', 'campus_lead'],
+    });
+
+    setWeeklyForm({ conversations: 0, events: 0, strongestSignal: '', blocker: '' });
+    setShowWeeklyPanel(false);
+    forceRefresh();
+    showToast('Weekly check-in logged. Progress recorded for Ops.');
+  };
+
+  const handleAddTraction = (type: string, value: string, link?: string, note?: string) => {
+    if (!currentApp && !currentProfile) return;
+    const update = {
+      id: `traction_${Date.now()}`,
+      profileId: currentProfileId,
+      type,
+      value,
+      link,
+      note,
+      createdAt: new Date().toISOString(),
+    };
+    (tractionSignals as any).push(update);
+    persistMockDb();
+
+    // Also update app payload for dossier
+    if (currentApp) {
+      const t = (currentApp.payload?.traction as any[]) || [];
+      t.push({ type, value, date: update.createdAt.slice(0,10) });
+      currentApp.payload = { ...currentApp.payload, traction: t };
+    }
+
+    createActivityEvent({
+      actorProfileId: currentProfileId,
+      actorRole: 'founder',
+      type: 'traction_added',
+      targetType: 'profile',
+      targetId: currentApp?.id || currentProfileId,
+      payload: { type, value, link },
+      visibleTo: ['ops', 'founder'],
+    });
+
+    setShowTractionPanel(false);
+    forceRefresh();
+    showToast(`Traction logged: ${type} — ${value}. Score updated.`);
+  };
+
+  const handleCompleteProfile = (extra: any) => {
+    if (currentApp) {
+      currentApp.payload = {
+        ...currentApp.payload,
+        ...extra,
+        profile_completed: true,
+        completed_at: new Date().toISOString(),
+      };
+    }
+    if (currentProfile) {
+      Object.assign(currentProfile, extra, { updatedAt: new Date().toISOString() });
+    }
+    persistMockDb();
+
+    createActivityEvent({
+      actorProfileId: currentProfileId,
+      actorRole: 'founder',
+      type: 'profile_updated',
+      targetType: 'profile',
+      targetId: currentApp?.id || currentProfileId,
+      payload: { action: 'complete_founder_profile', fields: Object.keys(extra) },
+      visibleTo: ['ops', 'founder'],
+    });
+
+    setShowProfilePanel(false);
+    forceRefresh();
+    showToast('Founder profile completed. Missing info updated, signal strengthened.');
+  };
+
+  const handleOpsDecision = (targetType: 'application' | 'lead', targetId: string, newStatus: string, noteText?: string) => {
+    if (targetType === 'application') {
+      const updated = updateApplicationStatus(targetId, newStatus as any);
+      if (updated) {
+        if (noteText || opsNote.text) {
+          const note = {
+            id: `note_${Date.now()}`,
+            targetType,
+            targetId,
+            note: noteText || opsNote.text,
+            decisionReason: opsNote.decisionReason,
+            nextStep: opsNote.nextStep,
+            authorId: 'prof_ops_001',
+            at: new Date().toISOString(),
+          };
+          (opsNotes as any).push(note);
+          persistMockDb();
+        }
+        createActivityEvent({
+          actorProfileId: 'prof_ops_001',
+          actorRole: 'ops',
+          type: 'application_status_changed',
+          targetType,
+          targetId,
+          payload: { to: newStatus, note: noteText || opsNote.text },
+          visibleTo: ['ops'],
+        });
+        forceRefresh();
+        setOpsNote({ text: '', decisionReason: '', nextStep: '' });
+        setSelectedTarget(null);
+        showToast(`Status updated to ${newStatus}. Reflected in role view.`);
+      }
+    } else {
+      // lead status
+      // For simplicity, mutate via leads repo or direct (extend if needed)
+      const lead = (mockLeads as any).find((l: any) => l.id === targetId);
+      if (lead) {
+        lead.status = newStatus;
+        lead.updatedAt = new Date().toISOString();
+        persistMockDb();
+        if (noteText || opsNote.text) {
+          const note = { id: `note_${Date.now()}`, targetType, targetId, note: noteText || opsNote.text, decisionReason: opsNote.decisionReason, nextStep: opsNote.nextStep, authorId: 'prof_ops_001', at: new Date().toISOString() };
+          (opsNotes as any).push(note);
+          persistMockDb();
+        }
+        createActivityEvent({
+          actorProfileId: 'prof_ops_001',
+          actorRole: 'ops',
+          type: 'lead_status_updated',
+          targetType,
+          targetId,
+          payload: { to: newStatus, note: noteText || opsNote.text },
+          visibleTo: ['ops'],
+        });
+        forceRefresh();
+        setOpsNote({ text: '', decisionReason: '', nextStep: '' });
+        setSelectedTarget(null);
+        showToast(`Lead moved to ${newStatus}.`);
+      }
+    }
+  };
+
+  // === Phase 5: Resolve REAL application + profile + cell + leads from public handoff (productized) ===
   const handoff = getApplicationHandoff();
   const handoffAppId = getCurrentHandoffApplicationId();
 
@@ -97,6 +301,41 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
     currentProfile = profiles.find(p => p.email.toLowerCase() === realEmail.toLowerCase()) || null;
   }
   const currentProfileId = currentProfile?.id || `prof_handoff_${currentView}`;
+
+  // Campus cell resolution (real school or fallback)
+  const cellSchool = realSchool || 'demo-campus';
+  let currentCell = campusCells.find((c: any) => (c as any).campusId === cellSchool || (c as any).schoolKey === cellSchool);
+  if (!currentCell && currentView === 'campus') {
+    currentCell = { id: `cell_${cellSchool}`, campusId: cellSchool, leadProfileId: currentProfileId, scouts: [], status: 'forming', checklist: {}, createdAt: new Date().toISOString() };
+    (campusCells as any).push(currentCell);
+    persistMockDb();
+  }
+
+  // Real leads for this submitter (from repo, includes real from public + actions)
+  const myLeads = currentView === 'campus' 
+    ? listFounderLeadsForScout(currentProfileId) // reuse for campus too; filter by submitter
+    : listFounderLeadsForScout(currentProfileId);
+
+  // Stage computation (purposeful, based on real data)
+  const computeCellStage = (scoutsLen: number, leadsLen: number) => {
+    if (scoutsLen === 0) return 'cell_forming';
+    if (scoutsLen < 4) return 'scout_recruiting';
+    if (leadsLen < 3) return 'active';
+    return 'high_signal';
+  };
+
+  // Update scoutCount from real cell or handoff actions
+  const effectiveScoutCount = (currentCell?.scouts?.length || 0) || scoutCount;
+
+  // Lead quality criteria (static purposeful list; check against lead data in UI)
+  const leadQualityCriteria = [
+    'founder identity',
+    'company/project',
+    'traction or proof',
+    'urgency/timing',
+    'founder-market fit',
+    'source/context',
+  ];
 
   // Live data from repos (now includes real apps created on public submit + mocks as fallback)
   const allActivities: ActivityEvent[] = listActivityEventsForOps();
@@ -173,25 +412,7 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
     showToast('Founder profile completed. Signal strengthened.');
   };
 
-  const handleAddTraction = (type: string, value: string) => {
-    if (currentApp) {
-      const traction = (currentApp.payload?.traction as any[]) || [];
-      traction.push({ type, value, date: new Date().toISOString().slice(0,10) });
-      currentApp.payload = { ...currentApp.payload, traction };
-    }
-    createActivityEvent({
-      actorProfileId: currentProfileId,
-      actorRole: 'founder',
-      type: 'traction_added',
-      targetType: 'profile',
-      targetId: currentApp?.id || currentProfileId,
-      payload: { type, value },
-      visibleTo: ['ops', 'founder'],
-    });
-    forceRefresh();
-    setShowTractionPanel(false);
-    showToast(`Traction added: ${type} — ${value}.`);
-  };
+  // (handleAddTraction already defined above in Phase 5 handlers)
 
   const handleCampusRecruit = () => {
     const newCount = Math.min(4, scoutCount + 1);

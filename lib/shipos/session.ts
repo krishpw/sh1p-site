@@ -227,6 +227,24 @@ export function getHandoffSchool(): string | null {
   return h?.school || null;
 }
 
+// Phase 5: rich resolution for productized views. Uses handoff appId first, then lists, then mocks in caller.
+export function getCurrentApplication(): any | null {
+  const id = getCurrentHandoffApplicationId();
+  if (id) {
+    // caller will import getApplicationById from repos
+    return { id }; // lightweight; full resolve in shell/repos
+  }
+  return null;
+}
+
+export function getCurrentProfileIdForView(view: string): string | null {
+  const h = getApplicationHandoff();
+  if (h && h.applicationId) {
+    return `prof_${h.selectedRole}_${h.applicationId.slice(-6)}`;
+  }
+  return null;
+}
+
 export function getApplicationHandoff(): ApplicationHandoff | null {
   if (typeof window === 'undefined') return null;
   try {

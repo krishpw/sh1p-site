@@ -378,6 +378,12 @@ export let founderScores: FounderScore[] = [];
 export let vcFirms: VcFirm[] = [];
 export let firmTheses: FirmThesis[] = [];
 
+// Phase 5: new purposeful data stores for productized workflows
+export let campusScouts: any[] = [];
+export let tractionSignals: any[] = [];
+export let weeklyCheckIns: any[] = [];
+export let opsNotes: any[] = [];
+
 const DB_KEY = "shipos_mock_db_v1";
 
 function persistMockDb(): void {
@@ -396,6 +402,10 @@ function persistMockDb(): void {
         founderScores,
         vcFirms,
         firmTheses,
+        campusScouts,
+        tractionSignals,
+        weeklyCheckIns,
+        opsNotes,
       })
     );
   } catch {
@@ -444,6 +454,10 @@ function loadOrSeed(): void {
       founderScores = Array.isArray(saved.founderScores) ? saved.founderScores : [...seedScores];
       vcFirms = Array.isArray(saved.vcFirms) ? saved.vcFirms : [...seedFirms];
       firmTheses = Array.isArray(saved.firmTheses) ? saved.firmTheses : [...seedTheses];
+      campusScouts = Array.isArray(saved.campusScouts) ? saved.campusScouts : [];
+      tractionSignals = Array.isArray(saved.tractionSignals) ? saved.tractionSignals : [];
+      weeklyCheckIns = Array.isArray(saved.weeklyCheckIns) ? saved.weeklyCheckIns : [];
+      opsNotes = Array.isArray(saved.opsNotes) ? saved.opsNotes : [];
       return;
     }
   } catch {
@@ -461,6 +475,10 @@ function loadOrSeed(): void {
   founderScores = [...seedScores];
   vcFirms = [...seedFirms];
   firmTheses = [...seedTheses];
+  campusScouts = [];
+  tractionSignals = [];
+  weeklyCheckIns = [];
+  opsNotes = [];
   persistMockDb();
 }
 
