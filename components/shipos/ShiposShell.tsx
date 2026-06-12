@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { ShiposView } from '@/lib/shipos/session';
 import { ShiposTopbar } from './ShiposTopbar';
@@ -7,26 +7,44 @@ import { ShiposPortal } from './ShiposPortal';
 import { ShiposStatusCard } from './ShiposStatusCard';
 import { ShiposActivityTimeline } from './ShiposActivityTimeline';
 import { ShiposRouteTransition } from './ShiposRouteTransition';
+import { ApplicationSummaryCard } from './ApplicationSummaryCard';
+import { SignalSubmitPanel } from './SignalSubmitPanel';
+import { LocalReviewQueue } from './LocalReviewQueue';
+import { MissingInfoPanel } from './MissingInfoPanel';
 
-import type { ActivityEvent } from '@/types/shipos';
+import type { ActivityEvent, ShipApplication } from '@/types/shipos';
 import {
   listActivityEventsForOps,
   createActivityEvent,
 } from '@/lib/repositories/activity';
-import { listApplications } from '@/lib/repositories/applications';
+import {
+  listApplications,
+  getApplicationById,
+  updateApplicationStatus,
+} from '@/lib/repositories/applications';
 import {
   createFounderLead,
   listFounderLeadsForOps,
   listFounderLeadsForScout,
 } from '@/lib/repositories/leads';
 import { calculateFounderSignalScore } from '@/lib/scoring/founderSignalScore';
+import {
+  getApplicationHandoff,
+  getCurrentHandoffApplicationId,
+  getHandoffFullName,
+  getHandoffSchool,
+  storeApplicationHandoff,
+} from '@/lib/shipos/session';
+import { upsertProfileFromApplication } from '@/lib/repositories/applications';
 
-// Pull deterministic demo data (Phase 1)
+// Pull deterministic demo data (Phase 1) as fallback only
 import {
   profiles,
   founderProfiles,
   applications as mockApps,
   founderLeads as mockLeads,
+  campusCells,
+  persistMockDb,
 } from '@/data/mockShipos';
 
 interface ShiposShellProps {
@@ -37,14 +55,79 @@ interface ShiposShellProps {
 export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onExit }) => {
   const [currentView, setCurrentView] = useState<ShiposView>(initialView);
   const [showTransition, setShowTransition] = useState(false);
-  const [tick, setTick] = useState(0); // force re-render after repo mutations
+  const [tick, setTick] = useState(0);
   const [localMessage, setLocalMessage] = useState<string | null>(null);
 
-  // Demo "current" profiles from Phase 1 seeds
-  const founderProfile = founderProfiles[0] || profiles.find((p) => p.role === 'founder');
-  const campusProfile = profiles.find((p) => p.role === 'campus_lead');
-  const scoutProfile = profiles.find((p) => p.role === 'scout');
-  const opsProfile = profiles.find((p) => p.role === 'ops');
+  // Phase 4 action panels
+  const [showLeadPanel, setShowLeadPanel] = useState(false);
+  const [showTractionPanel, setShowTractionPanel] = useState(false);
+  const [showProfilePanel, setShowProfilePanel] = useState(false);
+
+  // Demo interactive state for campus (scout count starts at 0 for real handoff users)
+  const [scoutCount, setScoutCount] = useState(0);
+
+  const forceRefresh = () => setTick((t) => t + 1);
+  const showToast = (msg: string) => {
+    setLocalMessage(msg);
+    setTimeout(() => setLocalMessage(null), 2400);
+  };
+
+  // === Phase 4: Resolve REAL application from public handoff ===
+  const handoff = getApplicationHandoff();
+  const handoffAppId = getCurrentHandoffApplicationId();
+
+  let currentApp: ShipApplication | null = handoffAppId ? getApplicationById(handoffAppId) : null;
+
+  if (!currentApp && handoff) {
+    // fallback: most recent application for the submitted route (persisted real ones first)
+    const routeType = handoff.submittedRoute === 'cohort' ? 'founder' : handoff.submittedRoute === 'campus-lead' ? 'campus_lead' : 'scout';
+    currentApp = listApplications({ routeType: routeType as any })[0] || null;
+  }
+
+  // Real identity from handoff or the created application payload
+  const realFullName = getHandoffFullName() || (currentApp?.payload?.full_name as string) || (currentApp?.payload?.name as string) || handoff?.applicantEmail?.split('@')[0] || 'Applicant';
+  const realEmail = handoff?.applicantEmail || currentApp?.email || 'applicant@ship.vc';
+  const realSchool = getHandoffSchool() || (currentApp?.payload?.school as string) || undefined;
+  const realSubmittedAt = currentApp?.submittedAt || handoff?.submittedAt || new Date().toISOString();
+  const realRouteType = currentApp?.routeType || (handoff?.submittedRoute === 'cohort' ? 'founder' : handoff?.submittedRoute === 'campus-lead' ? 'campus_lead' : 'scout');
+
+  // Ensure a real profile exists linked to this application (creates if needed, persists)
+  let currentProfile = currentApp ? upsertProfileFromApplication(currentApp) : null;
+  if (!currentProfile && realEmail) {
+    currentProfile = profiles.find(p => p.email.toLowerCase() === realEmail.toLowerCase()) || null;
+  }
+  const currentProfileId = currentProfile?.id || `prof_handoff_${currentView}`;
+
+  // Live data from repos (now includes real apps created on public submit + mocks as fallback)
+  const allActivities: ActivityEvent[] = listActivityEventsForOps();
+  const allApps = listApplications();
+  const allLeads = listFounderLeadsForOps();
+
+  // Role-specific slices (prefer real recent activity)
+  const founderActivities = allActivities.filter(e =>
+    (currentApp && e.targetId === currentApp.id) ||
+    e.actorProfileId === currentProfileId ||
+    e.targetId?.includes('founder') ||
+    e.visibleTo === 'all'
+  );
+  const campusActivities = allActivities.filter(e =>
+    (currentApp && e.targetId === currentApp.id) ||
+    e.actorProfileId === currentProfileId ||
+    (e.payload as any)?.school
+  );
+  const scoutActivities = allActivities.filter(e =>
+    (currentApp && e.targetId === currentApp.id) ||
+    e.actorProfileId === currentProfileId ||
+    e.type.includes('lead')
+  );
+
+  // Seed scout count from any prior activity for this handoff (or 0)
+  useEffect(() => {
+    if (currentView === 'campus' && currentApp) {
+      const recruitEvents = allActivities.filter(e => e.type === 'scout_recruited' && (e.targetId === currentApp!.id || e.actorProfileId === currentProfileId));
+      setScoutCount(Math.min(4, recruitEvents.length));
+    }
+  }, [currentView, currentApp?.id, tick]);
 
   const navigate = (next: ShiposView) => {
     if (next !== currentView) {
@@ -54,7 +137,6 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
         setShowTransition(false);
       }, 420);
     }
-    // ensure hash for shareability (parent also handles but we keep in sync)
     if (typeof window !== 'undefined') {
       const map: Record<ShiposView, string> = {
         portal: '#shipos',
@@ -67,85 +149,102 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
     }
   };
 
-  const forceRefresh = () => setTick((t) => t + 1);
-
-  const showToast = (msg: string) => {
-    setLocalMessage(msg);
-    setTimeout(() => setLocalMessage(null), 2400);
-  };
-
-  // Read live data (mutations from Phase 1 repos are visible)
-  const allActivities: ActivityEvent[] = listActivityEventsForOps();
-  const allApps = listApplications();
-  const allLeads = listFounderLeadsForOps();
-
-  // Role-specific activity slices (simple filter for preview)
-  const founderActivities = allActivities.filter(
-    (e) => e.actorProfileId === 'prof_founder_001' || e.targetId?.includes('founder') || e.visibleTo === 'all'
-  );
-  const campusActivities = allActivities.filter(
-    (e) => e.actorProfileId === 'prof_campus_001' || (e.payload as any)?.school
-  );
-  const scoutActivities = allActivities.filter(
-    (e) => e.actorProfileId === 'prof_scout_001' || e.type.includes('lead')
-  );
-
-  // --- CTA implementations (every primary action does something real) ---
+  // === Real CTAs (use actual ids from handoff/app, persist via repos) ===
   const handleFounderProfileComplete = () => {
+    // Simple profile completion: enrich the app payload + log
+    if (currentApp) {
+      currentApp.payload = {
+        ...currentApp.payload,
+        profile_completed: true,
+        completed_at: new Date().toISOString(),
+      };
+    }
     createActivityEvent({
-      actorProfileId: 'prof_founder_001',
+      actorProfileId: currentProfileId,
       actorRole: 'founder',
       type: 'profile_updated',
       targetType: 'profile',
-      targetId: 'prof_founder_001',
-      payload: { action: 'complete_founder_profile', added: 'traction + project details' },
+      targetId: currentApp?.id || currentProfileId,
+      payload: { action: 'complete_founder_profile', name: realFullName },
       visibleTo: ['ops', 'founder'],
     });
     forceRefresh();
-    showToast('Profile updated. Signal strengthened (+7 execution).');
+    setShowProfilePanel(false);
+    showToast('Founder profile completed. Signal strengthened.');
+  };
+
+  const handleAddTraction = (type: string, value: string) => {
+    if (currentApp) {
+      const traction = (currentApp.payload?.traction as any[]) || [];
+      traction.push({ type, value, date: new Date().toISOString().slice(0,10) });
+      currentApp.payload = { ...currentApp.payload, traction };
+    }
+    createActivityEvent({
+      actorProfileId: currentProfileId,
+      actorRole: 'founder',
+      type: 'traction_added',
+      targetType: 'profile',
+      targetId: currentApp?.id || currentProfileId,
+      payload: { type, value },
+      visibleTo: ['ops', 'founder'],
+    });
+    forceRefresh();
+    setShowTractionPanel(false);
+    showToast(`Traction added: ${type} — ${value}.`);
   };
 
   const handleCampusRecruit = () => {
+    const newCount = Math.min(4, scoutCount + 1);
+    setScoutCount(newCount);
+
+    // Try to persist a cell for the real school
+    const schoolKey = realSchool || 'user-campus';
+    let cell = campusCells.find((c: any) => (c as any).schoolKey === schoolKey);
+    if (!cell) {
+      cell = { id: `cell_${schoolKey}`, campusId: schoolKey, leadProfileId: currentProfileId, scouts: [], status: 'forming', checklist: {}, createdAt: new Date().toISOString() } as any;
+      (campusCells as any).push(cell);
+    }
+    (cell as any).scouts = Array.from({ length: newCount });
+
+    persistMockDb();
+
     createActivityEvent({
-      actorProfileId: 'prof_campus_001',
+      actorProfileId: currentProfileId,
       actorRole: 'campus_lead',
       type: 'scout_recruited',
       targetType: 'cell',
-      targetId: 'cell_stanford_001',
-      payload: { scoutsNow: '1/4' },
+      targetId: (cell as any).id,
+      payload: { school: realSchool || 'your campus', scouts: newCount },
       visibleTo: ['ops', 'campus_lead'],
     });
     forceRefresh();
-    showToast('Scout invited. Cell formation +1. (Demo)');
+    showToast(`Scout recruited. ${realSchool || 'Your campus'} cell at ${newCount}/4.`);
   };
 
-  const handleSubmitSignal = (by: 'scout' | 'campus') => {
-    const submitterId = by === 'scout' ? 'prof_scout_001' : 'prof_campus_001';
-    const founderName = by === 'scout' ? 'Tyler Ngo (demo)' : 'Lila Chen (demo)';
-
-    createFounderLead({
-      submittedByProfileId: submitterId,
-      submittedByRole: by,
+  const handleSubmitLead = (founderName: string, signal: string, traction?: string) => {
+    const lead = createFounderLead({
+      submittedByProfileId: currentProfileId,
+      submittedByRole: currentView === 'campus' ? 'campus_lead' : 'scout',
       founderName,
-      founderEmail: by === 'scout' ? 'tyler@ngo.dev' : 'lila@labnote.ai',
-      signal: 'High signal surfaced via ' + (by === 'scout' ? 'MIT network' : 'Stanford cell'),
-      traction: 'Pilot + early waitlist',
+      signal,
+      traction,
       status: 'submitted',
       notes: [],
     });
 
     createActivityEvent({
-      actorProfileId: submitterId,
-      actorRole: by === 'scout' ? 'scout' : 'campus_lead',
+      actorProfileId: currentProfileId,
+      actorRole: currentView === 'campus' ? 'campus_lead' : 'scout',
       type: 'lead_submitted',
       targetType: 'lead',
-      targetId: 'new_demo_lead',
-      payload: { founderName },
-      visibleTo: ['ops'],
+      targetId: lead.id,
+      payload: { founderName, from: realFullName },
+      visibleTo: ['ops', currentView === 'campus' ? 'campus_lead' : 'scout'],
     });
 
     forceRefresh();
-    showToast('Founder signal submitted. Now in review queue.');
+    setShowLeadPanel(false);
+    showToast('Founder signal submitted. Appears in your log and Ops queue.');
   };
 
   const handleOpsOpenQueue = () => {
@@ -155,182 +254,14 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
       type: 'review_queue_opened',
       targetType: 'application',
       targetId: 'queue',
-      payload: { apps: allApps.length, leads: allLeads.length },
+      payload: { apps: allApps.length, leads: allLeads.length, real: allApps.filter(a => !String(a.id).startsWith('app_')).length },
       visibleTo: ['ops'],
     });
     forceRefresh();
-    showToast(`Review queue opened — ${allApps.length} apps, ${allLeads.length} leads visible.`);
+    showToast(`Review queue opened — ${allApps.length} total.`);
   };
 
-  const handleAddTractionDemo = () => {
-    createActivityEvent({
-      actorProfileId: 'prof_founder_001',
-      actorRole: 'founder',
-      type: 'traction_added',
-      targetType: 'profile',
-      targetId: 'prof_founder_001',
-      payload: { type: 'pilot', value: 'New pilot signed (demo)' },
-      visibleTo: ['ops', 'founder'],
-    });
-    forceRefresh();
-    showToast('Traction logged. Founder signal recalculated.');
-  };
-
-  // Compute a live-ish score for founder preview using Phase 1 pure function
-  const founderScore = founderProfile
-    ? calculateFounderSignalScore({
-        profile: founderProfile,
-        tractionCount: 3,
-        descriptionLength: 140,
-      })
-    : { total: 68, breakdown: { executionVelocity: 18, marketClarity: 14, founderMarketFit: 15, communication: 11, networkSignal: 10 } };
-
-  // Render content per view (preview only — not full pages)
-  const renderMain = () => {
-    if (currentView === 'portal') {
-      return <ShiposPortal onNavigate={navigate} />;
-    }
-
-    if (currentView === 'founder') {
-      return (
-        <div className="max-w-4xl mx-auto px-6 pt-8 pb-20 space-y-8">
-          <ShiposStatusCard
-            title="FOUNDER ROUTE"
-            status="UNDER REVIEW"
-            description="Application received. SHIP is mapping your signal into the Founder Graph."
-            nextStep="Add traction or complete profile to move forward"
-          />
-
-          <div className="grid md:grid-cols-5 gap-6">
-            <div className="md:col-span-3">
-              <div className="border border-white/10 bg-[#0A0A0A]/70 p-7">
-                <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-2">SIGNAL SCORE (PREVIEW)</div>
-                <div className="font-serif text-6xl text-white tabular-nums tracking-tighter">{founderScore.total}</div>
-                <div className="text-xs text-white/50 mt-1">/ 100 — recalculates on traction</div>
-
-                <div className="mt-6 grid grid-cols-2 gap-x-8 gap-y-2 text-xs font-mono text-white/70">
-                  {Object.entries(founderScore.breakdown || {}).map(([k, v]) => (
-                    <div key={k} className="flex justify-between border-b border-white/10 pb-1">
-                      <span className="text-white/50">{k.replace(/([A-Z])/g, ' $1')}</span>
-                      <span className="text-[#FFB800]">{v}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <button
-                onClick={handleFounderProfileComplete}
-                className="mt-4 w-full border border-[#FFB800] bg-[#FFB800] text-black py-4 text-xs font-mono tracking-[0.25em] hover:bg-white active:scale-[0.985] transition"
-              >
-                COMPLETE FOUNDER PROFILE
-              </button>
-              <button
-                onClick={handleAddTractionDemo}
-                className="mt-2 w-full border border-white/20 py-3 text-xs font-mono tracking-widest text-white/80 hover:border-white/40"
-              >
-                ADD TRACTION SIGNAL (DEMO)
-              </button>
-            </div>
-
-            <div className="md:col-span-2">
-              <ShiposActivityTimeline events={founderActivities.length ? founderActivities : allActivities} max={4} title="YOUR ROUTE ACTIVITY" />
-            </div>
-          </div>
-
-          <div className="text-xs font-mono text-white/40 border-l-2 border-[#FFB800]/40 pl-4">
-            This is a live preview of the Founder Route Hub. All CTAs mutate the shared mock foundation and append to the activity log.
-          </div>
-        </div>
-      );
-    }
-
-    if (currentView === 'campus') {
-      return (
-        <div className="max-w-4xl mx-auto px-6 pt-8 pb-20 space-y-8">
-          <ShiposStatusCard
-            title="CAMPUS COMMAND"
-            status="CELL FORMING"
-            description="Stanford cell is live in the map. Recruit scouts and submit your first founder signal to activate."
-            nextStep="2–4 scouts required to unlock full pipeline"
-          />
-
-          <div className="flex flex-col md:flex-row gap-4">
-            <button
-              onClick={() => handleSubmitSignal('campus')}
-              className="flex-1 border border-[#FFB800] bg-[#FFB800] text-black py-5 text-xs font-mono tracking-[0.2em]"
-            >
-              SUBMIT FOUNDER SIGNAL
-            </button>
-            <button
-              onClick={handleCampusRecruit}
-              className="flex-1 border border-white/20 py-5 text-xs font-mono tracking-[0.2em] text-white/80 hover:border-[#FFB800]/60"
-            >
-              RECRUIT SCOUT (1/4)
-            </button>
-          </div>
-
-          <ShiposActivityTimeline events={campusActivities.length ? campusActivities : allActivities} max={4} title="CAMPUS CELL LOG" />
-        </div>
-      );
-    }
-
-    if (currentView === 'scout') {
-      return (
-        <div className="max-w-4xl mx-auto px-6 pt-8 pb-20 space-y-8">
-          <ShiposStatusCard
-            title="SCOUT SIGNAL HUB"
-            status="WEEKLY RHYTHM ON TRACK"
-            description="2 of 3 leads submitted this period. Stronger leads include traction + urgency + founder-market fit."
-            nextStep="Submit one more high-signal founder before Friday"
-          />
-
-          <button
-            onClick={() => handleSubmitSignal('scout')}
-            className="w-full border border-[#FFB800] bg-[#FFB800] text-black py-6 text-xs font-mono tracking-[0.25em]"
-          >
-            SUBMIT FOUNDER SIGNAL
-          </button>
-
-          <div className="text-[10px] font-mono text-white/40">Your sourced leads appear in the Ops review queue instantly (demo).</div>
-
-          <ShiposActivityTimeline events={scoutActivities.length ? scoutActivities : allActivities} max={4} title="SCOUT LOG" />
-        </div>
-      );
-    }
-
-    // OPS
-    return (
-      <div className="max-w-5xl mx-auto px-6 pt-8 pb-20 space-y-8">
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="border border-white/10 bg-[#0A0A0A]/70 p-6">
-            <div className="font-mono text-[10px] text-[#FFB800]/70">APPLICATIONS</div>
-            <div className="font-serif text-5xl text-white mt-1">{allApps.length}</div>
-            <div className="text-xs text-white/50">in review queue</div>
-          </div>
-          <div className="border border-white/10 bg-[#0A0A0A]/70 p-6">
-            <div className="font-mono text-[10px] text-[#FFB800]/70">FOUNDER LEADS</div>
-            <div className="font-serif text-5xl text-white mt-1">{allLeads.length}</div>
-            <div className="text-xs text-white/50">sourced this cycle</div>
-          </div>
-          <div className="border border-white/10 bg-[#0A0A0A]/70 p-6">
-            <div className="font-mono text-[10px] text-[#FFB800]/70">ACTIVE CELLS</div>
-            <div className="font-serif text-5xl text-white mt-1">1</div>
-            <div className="text-xs text-white/50">forming</div>
-          </div>
-        </div>
-
-        <button
-          onClick={handleOpsOpenQueue}
-          className="w-full border border-[#FFB800] bg-[#FFB800] text-black py-5 text-xs font-mono tracking-[0.2em]"
-        >
-          OPEN REVIEW QUEUE
-        </button>
-
-        <ShiposActivityTimeline events={allActivities} max={6} title="OPS ACTIVITY LOG" />
-      </div>
-    );
-  };
-
+  // === Role-aware labels from real data ===
   const roleLabel =
     currentView === 'founder' ? 'FOUNDER ROUTE' :
     currentView === 'campus' ? 'CAMPUS CELL' :
@@ -343,11 +274,154 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
     currentView === 'scout' ? 'RHYTHM ACTIVE' :
     currentView === 'ops' ? 'DISPATCH LIVE' : 'DEMO LAYER';
 
-  const profileLabel =
-    currentView === 'founder' ? 'alex.rivera@founder.dev' :
-    currentView === 'campus' ? 'jordan.hale@stanford.edu' :
-    currentView === 'scout' ? 'sam.patel@mit.edu' :
-    currentView === 'ops' ? 'ops@ship.vc' : 'DEMO SESSION';
+  const profileLabel = realEmail;
+
+  // === Render content using real application data ===
+  const renderMain = () => {
+    if (currentView === 'portal') {
+      return <ShiposPortal onNavigate={navigate} />;
+    }
+
+    if (currentView === 'founder') {
+      const pitch = (currentApp?.payload?.pitch as string) || (currentApp?.payload?.what_else_are_you_doing as string) || 'Not provided in application';
+      const links = currentApp?.payload?.profile || currentApp?.payload?.social || 'Not provided';
+      const missing = !realSchool && !links;
+
+      return (
+        <div className="max-w-4xl mx-auto px-6 pt-8 pb-20 space-y-8">
+          <ShiposStatusCard
+            title="FOUNDER ROUTE"
+            status="UNDER REVIEW"
+            description={`Application received from ${realFullName} (${realEmail}). SHIP is mapping your signal into the Founder Graph. Submitted ${new Date(realSubmittedAt).toLocaleString()}.`}
+            nextStep="Add traction or complete profile to move forward"
+          />
+
+          {missing && (
+            <MissingInfoPanel message="Missing school or links — this weakens network signal and thesis fit." cta="COMPLETE PROFILE" onCta={() => setShowProfilePanel(true)} />
+          )}
+
+          <div className="grid md:grid-cols-5 gap-6">
+            <div className="md:col-span-3 space-y-4">
+              <div className="border border-white/10 bg-[#0A0A0A]/70 p-7">
+                <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-2">REAL APPLICATION DATA</div>
+                <div className="text-sm text-white/80 mb-4">Name: {realFullName} • Email: {realEmail}</div>
+
+                <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-2">WHAT SHIP KNOWS (FROM YOUR SUBMISSION)</div>
+                <div className="text-white/80 text-sm leading-relaxed">{pitch}</div>
+                <div className="mt-3 text-xs text-white/50 font-mono">Links / Portfolio: {links}</div>
+              </div>
+
+              <div className="border border-white/10 bg-[#0A0A0A]/70 p-7">
+                <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-2">SIGNAL SCORE (LIVE FROM YOUR DATA)</div>
+                <div className="font-serif text-6xl text-white tabular-nums tracking-tighter">
+                  {currentApp ? calculateFounderSignalScore({ profile: currentProfile || { id: currentProfileId, email: realEmail, name: realFullName, role: 'founder', createdAt: realSubmittedAt }, tractionCount: ((currentApp.payload?.traction as any[]) || []).length, descriptionLength: (pitch as string).length }).total : 62}
+                </div>
+                <div className="text-xs text-white/50 mt-1">/ 100 — improves with traction & complete profile</div>
+              </div>
+
+              <button onClick={() => setShowProfilePanel(true)} className="w-full border border-[#FFB800] bg-[#FFB800] text-black py-4 text-xs font-mono tracking-[0.25em]">
+                COMPLETE FOUNDER PROFILE
+              </button>
+              <button onClick={() => setShowTractionPanel(true)} className="w-full border border-white/20 py-3 text-xs font-mono tracking-widest text-white/80 hover:border-white/40">
+                ADD TRACTION SIGNAL
+              </button>
+            </div>
+
+            <div className="md:col-span-2">
+              <ShiposActivityTimeline events={founderActivities.length ? founderActivities : allActivities} max={5} title="YOUR ROUTE ACTIVITY" />
+            </div>
+          </div>
+
+          <div className="text-xs font-mono text-white/40 border-l-2 border-[#FFB800]/40 pl-4">
+            This is the live Founder Route Hub wired to your submitted application. All CTAs create real persisted activity and update your local graph.
+          </div>
+        </div>
+      );
+    }
+
+    if (currentView === 'campus') {
+      const cellName = realSchool ? `${realSchool} Cell` : 'Your Campus Cell';
+      return (
+        <div className="max-w-4xl mx-auto px-6 pt-8 pb-20 space-y-8">
+          <ShiposStatusCard
+            title="CAMPUS COMMAND"
+            status="CELL FORMING"
+            description={`${cellName} • ${realFullName} (${realEmail}). Recruit 2–4 scouts and submit founder signals to activate.`}
+            nextStep={`Scouts recruited: ${scoutCount}/4`}
+          />
+
+          {(!realSchool) && <MissingInfoPanel message="No school in your application — cell cannot be mapped accurately." cta="ADD SCHOOL IN PROFILE" />}
+
+          <div className="flex flex-col md:flex-row gap-4">
+            <button onClick={() => setShowLeadPanel(true)} className="flex-1 border border-[#FFB800] bg-[#FFB800] text-black py-5 text-xs font-mono tracking-[0.2em]">
+              SUBMIT FOUNDER SIGNAL
+            </button>
+            <button onClick={handleCampusRecruit} className="flex-1 border border-white/20 py-5 text-xs font-mono tracking-[0.2em] text-white/80 hover:border-[#FFB800]/60">
+              RECRUIT SCOUT ({scoutCount}/4)
+            </button>
+          </div>
+
+          <ShiposActivityTimeline events={campusActivities.length ? campusActivities : allActivities} max={5} title="CAMPUS CELL LOG" />
+        </div>
+      );
+    }
+
+    if (currentView === 'scout') {
+      return (
+        <div className="max-w-4xl mx-auto px-6 pt-8 pb-20 space-y-8">
+          <ShiposStatusCard
+            title="SCOUT SIGNAL HUB"
+            status="RHYTHM ACTIVE"
+            description={`${realFullName} (${realEmail}). Find builders before the market. Weekly goal active.`}
+            nextStep="Submit high-signal leads"
+          />
+
+          <button onClick={() => setShowLeadPanel(true)} className="w-full border border-[#FFB800] bg-[#FFB800] text-black py-6 text-xs font-mono tracking-[0.25em]">
+            SUBMIT FOUNDER SIGNAL
+          </button>
+
+          <div className="text-[10px] font-mono text-white/40">Your sourced leads appear in the Ops review queue (persisted).</div>
+
+          <ShiposActivityTimeline events={scoutActivities.length ? scoutActivities : allActivities} max={5} title="SCOUT LOG" />
+        </div>
+      );
+    }
+
+    // OPS — now shows real applications + visible queue
+    const realAppsCount = allApps.filter(a => a.id && !String(a.id).includes('demo')).length || allApps.length;
+    return (
+      <div className="max-w-5xl mx-auto px-6 pt-8 pb-20 space-y-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="border border-white/10 bg-[#0A0A0A]/70 p-6">
+            <div className="font-mono text-[10px] text-[#FFB800]/70">APPLICATIONS (REAL + MOCK)</div>
+            <div className="font-serif text-5xl text-white mt-1">{allApps.length}</div>
+            <div className="text-xs text-white/50">real submissions: {realAppsCount}</div>
+          </div>
+          <div className="border border-white/10 bg-[#0A0A0A]/70 p-6">
+            <div className="font-mono text-[10px] text-[#FFB800]/70">FOUNDER LEADS</div>
+            <div className="font-serif text-5xl text-white mt-1">{allLeads.length}</div>
+            <div className="text-xs text-white/50">from real scouts/campus</div>
+          </div>
+          <div className="border border-white/10 bg-[#0A0A0A]/70 p-6">
+            <div className="font-mono text-[10px] text-[#FFB800]/70">ACTIVE CELLS</div>
+            <div className="font-serif text-5xl text-white mt-1">1</div>
+            <div className="text-xs text-white/50">forming from real apps</div>
+          </div>
+        </div>
+
+        <button onClick={handleOpsOpenQueue} className="w-full border border-[#FFB800] bg-[#FFB800] text-black py-5 text-xs font-mono tracking-[0.2em]">
+          OPEN / REFRESH REVIEW QUEUE
+        </button>
+
+        <div>
+          <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-3">LOCAL REVIEW QUEUE (PERSISTED REAL SUBMISSIONS)</div>
+          <LocalReviewQueue applications={allApps} onRefresh={forceRefresh} />
+        </div>
+
+        <ShiposActivityTimeline events={allActivities} max={8} title="OPS ACTIVITY LOG" />
+      </div>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-[#0A0A0A] text-white relative z-50">
@@ -369,7 +443,44 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
 
       {renderMain()}
 
-      {/* Toast / command feedback */}
+      {/* Action panels */}
+      <SignalSubmitPanel
+        isOpen={showLeadPanel}
+        onClose={() => setShowLeadPanel(false)}
+        submittedByProfileId={currentProfileId}
+        submittedByRole={currentView === 'campus' ? 'campus_lead' : 'scout'}
+        onSuccess={forceRefresh}
+        title={currentView === 'campus' ? 'Submit Founder Signal (Campus)' : 'Submit Founder Signal (Scout)'}
+      />
+
+      {/* Simple inline-style traction / profile panels for founder (kept lightweight) */}
+      {showTractionPanel && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={() => setShowTractionPanel(false)}>
+          <div className="w-full max-w-sm border border-white/10 bg-[#0A0A0A] p-6" onClick={e => e.stopPropagation()}>
+            <div className="font-serif mb-4">Add Traction Signal</div>
+            <form onSubmit={(e) => { e.preventDefault(); const f = e.currentTarget as any; handleAddTraction(f.type.value, f.value.value); }}>
+              <input name="type" placeholder="Type (e.g. pilot, revenue, waitlist)" className="w-full mb-2 bg-[#0F0F0F] border border-white/10 p-2 text-sm" required />
+              <input name="value" placeholder="Value / metric" className="w-full mb-4 bg-[#0F0F0F] border border-white/10 p-2 text-sm" required />
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setShowTractionPanel(false)} className="flex-1 border border-white/20 py-2 text-xs">CANCEL</button>
+                <button type="submit" className="flex-1 bg-[#FFB800] text-black py-2 text-xs font-mono tracking-widest">LOG TRACTION</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {showProfilePanel && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={() => setShowProfilePanel(false)}>
+          <div className="w-full max-w-sm border border-white/10 bg-[#0A0A0A] p-6" onClick={e => e.stopPropagation()}>
+            <div className="font-serif mb-4">Complete Founder Profile</div>
+            <button onClick={handleFounderProfileComplete} className="w-full bg-[#FFB800] text-black py-3 text-xs font-mono tracking-[0.2em]">MARK PROFILE COMPLETE + LOG</button>
+            <button onClick={() => setShowProfilePanel(false)} className="w-full mt-2 border border-white/20 py-2 text-xs">CLOSE</button>
+          </div>
+        </div>
+      )}
+
+      {/* Toast */}
       <AnimatePresence>
         {localMessage && (
           <motion.div

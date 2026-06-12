@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Zap, Loader2, AlertCircle } from 'lucide-react';
 import { storeApplicationHandoff } from '@/lib/shipos/session';
+import { createApplication, upsertProfileFromApplication } from '@/lib/repositories/applications';
 
 export const Launchpad: React.FC = () => {
   const [focusedField, setFocusedField] = useState<string | null>(null);
@@ -16,8 +17,9 @@ export const Launchpad: React.FC = () => {
   const [status, setStatus] = useState<'IDLE' | 'SENDING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
-  // Phase 3: stash email for SHIPOS handoff (captured before form clear)
+  // Phase 4: stash full submitted data for real application-aware SHIPOS (not just email)
   const [lastHandoffEmail, setLastHandoffEmail] = useState<string | null>(null);
+  const [lastSubmittedData, setLastSubmittedData] = useState<any>(null);
 
   const inputClasses = (name: string) => `
     w-full bg-[#0F0F0F] border transition-all duration-300 outline-none p-4 md:p-6 text-white font-sans placeholder:text-white/20
@@ -73,6 +75,7 @@ export const Launchpad: React.FC = () => {
 
         const email = formData.email;
         setLastHandoffEmail(email || null);
+        setLastSubmittedData({ ...formData, application_type: 'Cohort' });
         setStatus('SUCCESS');
         setFormData({ name: '', email: '', social: '', pitch: '' });
       } else {
@@ -163,12 +166,32 @@ export const Launchpad: React.FC = () => {
                               whileHover={{ scale: 0.985 }}
                               whileTap={{ scale: 0.98 }}
                               onClick={() => {
+                                const submitted = lastSubmittedData || { name: lastHandoffEmail ? lastHandoffEmail.split('@')[0] : 'Applicant', email: lastHandoffEmail || 'applicant@ship.vc' };
+                                const payload = {
+                                  ...submitted,
+                                  application_type: 'Cohort',
+                                  full_name: submitted.name,
+                                  social: submitted.social,
+                                  pitch: submitted.pitch,
+                                };
+                                // Create the real structured application (persisted via repo + localStorage)
+                                const app = createApplication({
+                                  email: submitted.email,
+                                  routeType: 'founder',
+                                  status: 'submitted',
+                                  payload,
+                                });
+                                // Link a real profile from the submitted data
+                                upsertProfileFromApplication(app);
+
                                 const handoff = {
                                   selectedRole: 'founder' as const,
                                   submittedRoute: 'cohort' as const,
-                                  applicantEmail: lastHandoffEmail || undefined,
+                                  applicantEmail: submitted.email,
                                   submittedAt: new Date().toISOString(),
                                   applicationStatus: 'submitted' as const,
+                                  applicationId: app.id,
+                                  fullName: submitted.name || submitted.full_name,
                                 };
                                 storeApplicationHandoff(handoff);
                                 window.location.hash = '#shipos/founder';

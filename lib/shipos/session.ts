@@ -173,6 +173,11 @@ export interface ApplicationHandoff {
   applicantEmail?: string;
   submittedAt: string;
   applicationStatus: 'submitted';
+  // Phase 4: reference to the real structured application record
+  applicationId?: string;
+  fullName?: string;
+  school?: string;
+  // other fields can live in the ShipApplication payload
 }
 
 const HANDOFF_KEY = 'shipos_application_handoff';
@@ -200,6 +205,26 @@ export function storeApplicationHandoff(handoff: ApplicationHandoff): void {
   });
 
   saveShipSession(session);
+}
+
+/**
+ * Phase 4 helpers for application-aware resolution.
+ * Prefer handoff's applicationId (set during real public submit).
+ * Fall back to most recent matching application or null (caller can use mock).
+ */
+export function getCurrentHandoffApplicationId(): string | null {
+  const h = getApplicationHandoff();
+  return h?.applicationId || null;
+}
+
+export function getHandoffFullName(): string | null {
+  const h = getApplicationHandoff();
+  return h?.fullName || null;
+}
+
+export function getHandoffSchool(): string | null {
+  const h = getApplicationHandoff();
+  return h?.school || null;
 }
 
 export function getApplicationHandoff(): ApplicationHandoff | null {

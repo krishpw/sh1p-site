@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, AlertCircle, ArrowRight } from 'lucide-react';
 import { storeApplicationHandoff } from '@/lib/shipos/session';
+import { createApplication, upsertProfileFromApplication } from '@/lib/repositories/applications';
 
 type RouteType = "cohort" | "campus-lead" | "scout";
 
@@ -267,8 +268,9 @@ const ApplicationPanel: React.FC<ApplicationPanelProps> = ({ type, title, subtit
   const [status, setStatus] = useState<'IDLE' | 'SENDING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
-  // Phase 3: stash email for SHIPOS handoff (from FormData on successful submit)
+  // Phase 4: stash full submitted form data (all fields) for application-aware SHIPOS
   const [lastSubmittedEmail, setLastSubmittedEmail] = useState<string | null>(null);
+  const [lastSubmittedData, setLastSubmittedData] = useState<any>(null);
 
   const inputClasses = (name: string) => `
     w-full bg-[#0F0F0F] border transition-all duration-300 outline-none p-4 text-white font-sans placeholder:text-white/20 text-sm
@@ -304,6 +306,7 @@ const ApplicationPanel: React.FC<ApplicationPanelProps> = ({ type, title, subtit
 
       if (response.ok) {
         setLastSubmittedEmail((data.email as string) || null);
+        setLastSubmittedData(data);  // full fields including why_*, school, profile, founder_to_watch etc.
         setStatus('SUCCESS');
       } else {
         throw new Error(result?.message || "Transmission failed");
@@ -365,12 +368,27 @@ const ApplicationPanel: React.FC<ApplicationPanelProps> = ({ type, title, subtit
                       whileHover={{ scale: 0.985 }}
                       whileTap={{ scale: 0.98 }}
                       onClick={() => {
+                        const submitted = lastSubmittedData || { email: lastSubmittedEmail || 'applicant@ship.vc', full_name: 'Applicant' };
+                        const payload = { ...submitted };
+                        const routeType = isCampus ? 'campus_lead' : 'scout';
+                        // Create the real structured application record
+                        const app = createApplication({
+                          email: submitted.email || lastSubmittedEmail || 'applicant@ship.vc',
+                          routeType,
+                          status: 'submitted',
+                          payload,
+                        });
+                        upsertProfileFromApplication(app);
+
                         const handoff = {
                           selectedRole: role,
                           submittedRoute,
-                          applicantEmail: lastSubmittedEmail || undefined,
+                          applicantEmail: submitted.email || lastSubmittedEmail,
                           submittedAt: new Date().toISOString(),
                           applicationStatus: 'submitted' as const,
+                          applicationId: app.id,
+                          fullName: (submitted.full_name as string) || (submitted.name as string),
+                          school: (submitted.school as string) || undefined,
                         };
                         storeApplicationHandoff(handoff);
                         window.location.hash = targetHash;
