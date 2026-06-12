@@ -13,6 +13,10 @@ import { CartographicBackground } from './components/CartographicBackground';
 import { PathwaySelector } from './components/PathwaySelector';
 import { AnimatePresence, motion, useMotionValue, useSpring, useTransform } from 'framer-motion';
 
+// Phase 2 additive — SHIPOS portal/shell (inactive unless #shipos hash is present)
+import { ShiposShell } from './components/shipos/ShiposShell';
+import { parseShiposViewFromHash } from './lib/shipos/session';
+
 export default function App() {
   const [loading, setLoading] = useState(true);
 
@@ -60,6 +64,29 @@ export default function App() {
     return () => window.removeEventListener('mousemove', handleMouseMove);
   }, [mouseX, mouseY]);
 
+  // SHIPOS Phase 2 — hash-based internal routing (zero effect on public when absent)
+  const [shiposView, setShiposView] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : parseShiposViewFromHash()
+  );
+
+  useEffect(() => {
+    const syncFromHash = () => {
+      const v = parseShiposViewFromHash();
+      setShiposView(v);
+    };
+    syncFromHash();
+    window.addEventListener('hashchange', syncFromHash);
+    return () => window.removeEventListener('hashchange', syncFromHash);
+  }, []);
+
+  const exitToPublic = () => {
+    setShiposView(null);
+    if (typeof window !== 'undefined') {
+      const cleanUrl = window.location.pathname + window.location.search;
+      window.history.replaceState(null, '', cleanUrl);
+    }
+  };
+
   return (
     <div className="relative min-h-screen w-full flex flex-col bg-background antialiased selection:bg-[#FFB800]/20 selection:text-white overflow-hidden">
       
@@ -73,50 +100,57 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      <Navigation />
-      
-      {/* Dynamic Spotlight (Brighter Screen Feel) */}
-      {/* Increased opacity from 0.08 to 0.15 for more brightness */}
-      <motion.div 
-        className="fixed inset-0 z-30 pointer-events-none mix-blend-screen"
-        style={{
-            background: useTransform(
-                [spotX, spotY],
-                ([x, y]) => `radial-gradient(600px circle at ${x} ${y}, rgba(255,255,255,0.15), transparent 40%)`
-            )
-        }}
-      />
+      {/* SHIPOS Phase 2: completely bypassed when no #shipos hash — public render path is byte-identical */}
+      {shiposView ? (
+        <ShiposShell view={shiposView as any} onExit={exitToPublic} />
+      ) : (
+        <>
+          <Navigation />
+          
+          {/* Dynamic Spotlight (Brighter Screen Feel) */}
+          {/* Increased opacity from 0.08 to 0.15 for more brightness */}
+          <motion.div 
+            className="fixed inset-0 z-30 pointer-events-none mix-blend-screen"
+            style={{
+                background: useTransform(
+                    [spotX, spotY],
+                    ([x, y]) => `radial-gradient(600px circle at ${x} ${y}, rgba(255,255,255,0.15), transparent 40%)`
+                )
+            }}
+          />
 
-      {/* Main Content Flow - Haptic Container */}
-      {/* Wrapped in perspective div to allow fixed children outside to work properly while maintaining 3D effect on content */}
-      <div className="perspective-[1000px] flex-grow w-full flex flex-col relative z-10">
-        <motion.main 
-          initial={{ opacity: 0 }}
-          animate={{ opacity: !loading ? 1 : 0 }}
-          transition={{ duration: 1, delay: 0.2 }}
-          style={{ 
-              rotateX, 
-              rotateY, 
-              x: translateX, 
-              y: translateY 
-          }}
-          className="w-full flex flex-col relative transform-style-3d origin-center"
-        >
-          <Hero />
-          <PathwaySelector />
-          <Manifesto />
-          <ProgramTimeline />
-          <Mentors />
-          <Specs />
-          <FAQ />
-          <Launchpad />
-        </motion.main>
-      </div>
+          {/* Main Content Flow - Haptic Container */}
+          {/* Wrapped in perspective div to allow fixed children outside to work properly while maintaining 3D effect on content */}
+          <div className="perspective-[1000px] flex-grow w-full flex flex-col relative z-10">
+            <motion.main 
+              initial={{ opacity: 0 }}
+              animate={{ opacity: !loading ? 1 : 0 }}
+              transition={{ duration: 1, delay: 0.2 }}
+              style={{ 
+                  rotateX, 
+                  rotateY, 
+                  x: translateX, 
+                  y: translateY 
+              }}
+              className="w-full flex flex-col relative transform-style-3d origin-center"
+            >
+              <Hero />
+              <PathwaySelector />
+              <Manifesto />
+              <ProgramTimeline />
+              <Mentors />
+              <Specs />
+              <FAQ />
+              <Launchpad />
+            </motion.main>
+          </div>
 
-      <Footer />
-      
-      {/* Vignette effect - Reduced opacity from 0.3 to 0.15 */}
-      <div className="fixed inset-0 pointer-events-none z-40 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.15)_100%)]" />
+          <Footer />
+          
+          {/* Vignette effect - Reduced opacity from 0.3 to 0.15 */}
+          <div className="fixed inset-0 pointer-events-none z-40 bg-[radial-gradient(circle_at_center,transparent_0%,rgba(0,0,0,0.15)_100%)]" />
+        </>
+      )}
     </div>
   );
 }
