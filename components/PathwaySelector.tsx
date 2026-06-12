@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Loader2, AlertCircle, ArrowRight } from 'lucide-react';
+import { storeApplicationHandoff } from '@/lib/shipos/session';
 
 type RouteType = "cohort" | "campus-lead" | "scout";
 
@@ -266,6 +267,9 @@ const ApplicationPanel: React.FC<ApplicationPanelProps> = ({ type, title, subtit
   const [status, setStatus] = useState<'IDLE' | 'SENDING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [focusedField, setFocusedField] = useState<string | null>(null);
 
+  // Phase 3: stash email for SHIPOS handoff (from FormData on successful submit)
+  const [lastSubmittedEmail, setLastSubmittedEmail] = useState<string | null>(null);
+
   const inputClasses = (name: string) => `
     w-full bg-[#0F0F0F] border transition-all duration-300 outline-none p-4 text-white font-sans placeholder:text-white/20 text-sm
     ${focusedField === name 
@@ -299,6 +303,7 @@ const ApplicationPanel: React.FC<ApplicationPanelProps> = ({ type, title, subtit
       const result = await response.json().catch(() => null);
 
       if (response.ok) {
+        setLastSubmittedEmail((data.email as string) || null);
         setStatus('SUCCESS');
       } else {
         throw new Error(result?.message || "Transmission failed");
@@ -341,6 +346,42 @@ const ApplicationPanel: React.FC<ApplicationPanelProps> = ({ type, title, subtit
                   Application logged. If there's a fit, we'll reach out with next steps.
               </p>
               <span className="font-mono text-[10px] text-white/25 uppercase tracking-widest mt-2">TRANSMISSION COMPLETE</span>
+
+              {/* Phase 3: SHIPOS handoff CTA — added without removing or restyling the existing SIGNAL RECEIVED block */}
+              {(() => {
+                const isCampus = type === "Campus Lead";
+                const role = isCampus ? 'campus' as const : 'scout' as const;
+                const submittedRoute = isCampus ? 'campus-lead' as const : 'scout' as const;
+                const message = isCampus
+                  ? "Your campus signal has entered the map."
+                  : "Your scout signal has entered the map.";
+                const cta = isCampus ? "ENTER CAMPUS COMMAND" : "ENTER SIGNAL HUB";
+                const targetHash = isCampus ? '#shipos/campus' : '#shipos/scout';
+
+                return (
+                  <div className="mt-8 pt-6 border-t border-[#FFB800]/20 w-full max-w-sm mx-auto">
+                    <p className="text-white/70 font-sans text-sm mb-3">{message}</p>
+                    <motion.button
+                      whileHover={{ scale: 0.985 }}
+                      whileTap={{ scale: 0.98 }}
+                      onClick={() => {
+                        const handoff = {
+                          selectedRole: role,
+                          submittedRoute,
+                          applicantEmail: lastSubmittedEmail || undefined,
+                          submittedAt: new Date().toISOString(),
+                          applicationStatus: 'submitted' as const,
+                        };
+                        storeApplicationHandoff(handoff);
+                        window.location.hash = targetHash;
+                      }}
+                      className="w-full bg-[#FFB800] hover:bg-[#FFC000] text-black font-bold uppercase tracking-[0.2em] text-sm py-4 flex items-center justify-center gap-3 transition-all shadow-[0_0_30px_rgba(255,184,0,0.2)]"
+                    >
+                      {cta}
+                    </motion.button>
+                  </div>
+                );
+              })()}
            </motion.div>
         ) : (
           <form action={FORMSUBMIT_ENDPOINT} method="POST" onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-6">

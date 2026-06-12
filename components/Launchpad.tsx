@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Zap, Loader2, AlertCircle } from 'lucide-react';
+import { storeApplicationHandoff } from '@/lib/shipos/session';
 
 export const Launchpad: React.FC = () => {
   const [focusedField, setFocusedField] = useState<string | null>(null);
@@ -14,6 +15,9 @@ export const Launchpad: React.FC = () => {
   });
   const [status, setStatus] = useState<'IDLE' | 'SENDING' | 'SUCCESS' | 'ERROR'>('IDLE');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Phase 3: stash email for SHIPOS handoff (captured before form clear)
+  const [lastHandoffEmail, setLastHandoffEmail] = useState<string | null>(null);
 
   const inputClasses = (name: string) => `
     w-full bg-[#0F0F0F] border transition-all duration-300 outline-none p-4 md:p-6 text-white font-sans placeholder:text-white/20
@@ -67,6 +71,8 @@ export const Launchpad: React.FC = () => {
           throw new Error("Form activation required. Deploy to the stable domain, activate the latest FormSubmit email, then try again.");
         }
 
+        const email = formData.email;
+        setLastHandoffEmail(email || null);
         setStatus('SUCCESS');
         setFormData({ name: '', email: '', social: '', pitch: '' });
       } else {
@@ -147,6 +153,31 @@ export const Launchpad: React.FC = () => {
                           >
                               Submit another
                           </button>
+
+                          {/* Phase 3: SHIPOS handoff CTA — preserves the existing SIGNAL RECEIVED block exactly */}
+                          <div className="mt-8 pt-6 border-t border-[#FFB800]/20 w-full max-w-sm mx-auto">
+                            <p className="text-white/70 font-sans text-sm mb-3">
+                              Your founder signal has entered the map.
+                            </p>
+                            <motion.button
+                              whileHover={{ scale: 0.985 }}
+                              whileTap={{ scale: 0.98 }}
+                              onClick={() => {
+                                const handoff = {
+                                  selectedRole: 'founder' as const,
+                                  submittedRoute: 'cohort' as const,
+                                  applicantEmail: lastHandoffEmail || undefined,
+                                  submittedAt: new Date().toISOString(),
+                                  applicationStatus: 'submitted' as const,
+                                };
+                                storeApplicationHandoff(handoff);
+                                window.location.hash = '#shipos/founder';
+                              }}
+                              className="w-full bg-[#FFB800] hover:bg-[#FFC000] text-black font-bold uppercase tracking-[0.2em] text-sm py-4 flex items-center justify-center gap-3 transition-all shadow-[0_0_30px_rgba(255,184,0,0.2)]"
+                            >
+                              ENTER FOUNDER ROUTE
+                            </motion.button>
+                          </div>
                       </motion.div>
                   ) : (
                       <motion.form 

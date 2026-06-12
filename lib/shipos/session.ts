@@ -58,12 +58,34 @@ export function clearShiposHash(): void {
 
 /**
  * Demo helper: ensure a session exists for the given role using Phase 1 mocks.
- * Picks the first matching profile from seed data (via storage helpers).
+ * Phase 3: prefers a real applicant handoff (email + role) if one was stored from public success.
  */
 export function ensureDemoSessionForView(view: ShiposView): { profileId: string; role: ShipRole; email: string } | null {
   if (typeof window === 'undefined') return null;
 
-  // Map view to role and a representative email from Phase 1 mock data
+  // Phase 3 handoff preference: if a matching handoff with real email exists, use it
+  const handoff = getApplicationHandoff();
+  if (handoff) {
+    const handoffView: ShiposView =
+      handoff.selectedRole === 'founder' ? 'founder' :
+      handoff.selectedRole === 'campus' ? 'campus' : 'scout';
+
+    if (handoffView === view && handoff.applicantEmail) {
+      const role: ShipRole =
+        handoff.selectedRole === 'founder' ? 'founder' :
+        handoff.selectedRole === 'campus' ? 'campus_lead' : 'scout';
+
+      const session = createSessionForProfile({
+        id: `handoff_${handoff.selectedRole}`,
+        role,
+        email: handoff.applicantEmail,
+      });
+      saveShipSession(session);
+      return session;
+    }
+  }
+
+  // Map view to role and a representative email from Phase 1 mock data (fallback)
   const roleMap: Record<ShiposView, { role: ShipRole; email: string }> = {
     portal: { role: 'ops', email: 'ops@ship.vc' },
     founder: { role: 'founder', email: 'alex.rivera@founder.dev' },
@@ -131,7 +153,66 @@ export function useShiposView(): {
     setView(null);
     clearShiposHash();
     clearDemoSession();
+    clearApplicationHandoff();
   };
 
   return { view, navigate, exit };
+}
+
+// ============================================================
+// Phase 3: Application Handoff to SHIPOS
+// Stores route-aware payload from public success states.
+// Also seeds a real session (with applicant email) for the role.
+// SHIPOS code (shell / future) can read via getApplicationHandoff().
+// The ensureDemoSessionForView above already prefers handoff when present.
+// ============================================================
+
+export interface ApplicationHandoff {
+  selectedRole: 'founder' | 'campus' | 'scout';
+  submittedRoute: 'cohort' | 'campus-lead' | 'scout';
+  applicantEmail?: string;
+  submittedAt: string;
+  applicationStatus: 'submitted';
+}
+
+const HANDOFF_KEY = 'shipos_application_handoff';
+
+export function storeApplicationHandoff(handoff: ApplicationHandoff): void {
+  if (typeof window === 'undefined') return;
+
+  localStorage.setItem(HANDOFF_KEY, JSON.stringify(handoff));
+
+  // Seed a proper session using the real submitted email (if provided).
+  // This makes getShipSession() return the applicant details for the role.
+  const role: ShipRole =
+    handoff.selectedRole === 'founder'
+      ? 'founder'
+      : handoff.selectedRole === 'campus'
+      ? 'campus_lead'
+      : 'scout';
+
+  const email = handoff.applicantEmail || `applicant-${handoff.selectedRole}@ship.vc`;
+
+  const session = createSessionForProfile({
+    id: `handoff_${handoff.selectedRole}`,
+    role,
+    email,
+  });
+
+  saveShipSession(session);
+}
+
+export function getApplicationHandoff(): ApplicationHandoff | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(HANDOFF_KEY);
+    return raw ? (JSON.parse(raw) as ApplicationHandoff) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function clearApplicationHandoff(): void {
+  if (typeof window === 'undefined') return;
+  localStorage.removeItem(HANDOFF_KEY);
 }
