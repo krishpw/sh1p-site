@@ -16,6 +16,7 @@ const ROLE_LABELS: Record<ShiposView, string> = {
   campus: 'CAMPUS CELL',
   scout: 'SCOUT SIGNAL',
   ops: 'SHIP OPS',
+  firm: 'FIRM PORTAL',
 };
 
 export const ShiposTopbar: React.FC<ShiposTopbarProps> = ({

@@ -53,7 +53,7 @@ const DriveBeltMarquee = ({ speedFactor }: { speedFactor: any }) => {
   );
 };
 
-const GridCell = ({ item }: { item: typeof rosterItems[0] }) => {
+const GridCell = ({ item }: { item: typeof rosterItems[0], key?: React.Key }) => {
   return (
     <motion.div 
       className="group relative p-8 md:p-12 border border-white/10 flex flex-col justify-between h-[300px] transition-colors duration-500 hover:border-[#FFB800]/50 hover:bg-[#FFB800]/5"

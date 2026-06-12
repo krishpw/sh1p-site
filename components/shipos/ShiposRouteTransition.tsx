@@ -14,6 +14,7 @@ const COPY: Record<ShiposView, { line1: string; line2: string }> = {
   campus: { line1: 'YOUR CAMPUS CELL', line2: 'IS FORMING IN THE GRAPH' },
   scout: { line1: 'SCOUT SIGNAL HUB', line2: 'READY TO SURFACE BUILDERS' },
   ops: { line1: 'SHIP OPS CONSOLE', line2: 'REVIEW QUEUE LOADED' },
+  firm: { line1: 'FIRM PORTAL', line2: 'THESIS & DELIVERY LIVE' },
 };
 
 export const ShiposRouteTransition: React.FC<ShiposRouteTransitionProps> = ({

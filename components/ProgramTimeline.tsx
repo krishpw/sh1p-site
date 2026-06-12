@@ -34,7 +34,7 @@ const programWeeks = [
   }
 ];
 
-const WeekRow = ({ item, index, scrollYProgress, totalItems }: { item: typeof programWeeks[0], index: number, scrollYProgress: any, totalItems: number }) => {
+const WeekRow = ({ item, index, scrollYProgress, totalItems }: { item: typeof programWeeks[0], index: number, scrollYProgress: any, totalItems: number, key?: React.Key }) => {
   const step = 1 / totalItems;
   const start = index * step;
   

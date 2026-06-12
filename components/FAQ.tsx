@@ -58,7 +58,7 @@ const CornerBrackets = ({ active }: { active: boolean }) => (
   </>
 );
 
-const DiagnosticCard = ({ item, isOpen, toggleOpen }: { item: QuestionItem, isOpen: boolean, toggleOpen: (id: string) => void }) => {
+const DiagnosticCard = ({ item, isOpen, toggleOpen }: { item: QuestionItem, isOpen: boolean, toggleOpen: (id: string) => void, key?: React.Key }) => {
   const mouseX = useMotionValue(0);
   const mouseY = useMotionValue(0);
 

@@ -2,7 +2,6 @@ import React from 'react';
 import type { ShipApplication, ApplicationStatus } from '@/types/shipos';
 import { ApplicationSummaryCard } from './ApplicationSummaryCard';
 import { updateApplicationStatus } from '@/lib/repositories/applications';
-import { createActivityEvent } from '@/lib/repositories/activity';
 
 interface LocalReviewQueueProps {
   applications: ShipApplication[];
@@ -19,15 +18,6 @@ export const LocalReviewQueue: React.FC<LocalReviewQueueProps> = ({ applications
   const handleStatus = (id: string, newStatus: ApplicationStatus) => {
     const updated = updateApplicationStatus(id, newStatus);
     if (updated) {
-      createActivityEvent({
-        actorProfileId: 'prof_ops_001',
-        actorRole: 'ops',
-        type: 'application_status_changed',
-        targetType: 'application',
-        targetId: id,
-        payload: { to: newStatus },
-        visibleTo: ['ops'],
-      });
       onRefresh();
     }
   };

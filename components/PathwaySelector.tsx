@@ -37,7 +37,7 @@ export const PathwaySelector: React.FC = () => {
   const [activeRoute, setActiveRoute] = useState<"campus-lead" | "scout" | null>(null);
   const [hoveredRoute, setHoveredRoute] = useState<RouteType | null>(null);
 
-  const handleRouteClick = (id: RouteType) => {
+  const handleRouteClick = (id: RouteType | string) => {
     if (id === "cohort") {
       setActiveRoute(null);
       document.getElementById("apply")?.scrollIntoView({ behavior: "smooth" });

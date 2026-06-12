@@ -36,7 +36,7 @@ export default function App() {
     if (typeof window === 'undefined') return null;
     const v = parseShiposViewFromHash();
     if (!v) return null;
-    const validViews = ['portal', 'founder', 'campus', 'scout', 'ops'];
+    const validViews = ['portal', 'founder', 'campus', 'scout', 'ops', 'firm'];
     return validViews.includes(v) ? v : 'portal';
   };
 

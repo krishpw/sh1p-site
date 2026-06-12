@@ -27,6 +27,7 @@ import {
   createFounderLead,
   listFounderLeadsForOps,
   listFounderLeadsForScout,
+  updateFounderLeadStatus,
 } from '@/lib/repositories/leads';
 import { calculateFounderSignalScore } from '@/lib/scoring/founderSignalScore';
 import {
@@ -45,6 +46,10 @@ import {
   applications as mockApps,
   founderLeads as mockLeads,
   campusCells,
+  campusScouts,
+  tractionSignals,
+  weeklyCheckIns,
+  opsNotes,
   persistMockDb,
   partnerOffers,
   newsletterPosts,
@@ -236,42 +241,21 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
           (opsNotes as any).push(note);
           persistMockDb();
         }
-        createActivityEvent({
-          actorProfileId: 'prof_ops_001',
-          actorRole: 'ops',
-          type: 'application_status_changed',
-          targetType,
-          targetId,
-          payload: { to: newStatus, note: noteText || opsNote.text },
-          visibleTo: ['ops'],
-        });
+        // repo updateApplicationStatus already emits activity; avoid duplicate
         forceRefresh();
         setOpsNote({ text: '', decisionReason: '', nextStep: '' });
         setSelectedTarget(null);
         showToast(`Status updated to ${newStatus}. Reflected in role view.`);
       }
     } else {
-      // lead status
-      // For simplicity, mutate via leads repo or direct (extend if needed)
-      const lead = (mockLeads as any).find((l: any) => l.id === targetId);
-      if (lead) {
-        lead.status = newStatus;
-        lead.updatedAt = new Date().toISOString();
-        persistMockDb();
+      // lead status - use repo for correct persist + activity + notes
+      const updatedLead = updateFounderLeadStatus(targetId, newStatus as any, noteText || opsNote.text || undefined);
+      if (updatedLead) {
         if (noteText || opsNote.text) {
           const note = { id: `note_${Date.now()}`, targetType, targetId, note: noteText || opsNote.text, decisionReason: opsNote.decisionReason, nextStep: opsNote.nextStep, authorId: 'prof_ops_001', at: new Date().toISOString() };
           (opsNotes as any).push(note);
           persistMockDb();
         }
-        createActivityEvent({
-          actorProfileId: 'prof_ops_001',
-          actorRole: 'ops',
-          type: 'lead_status_updated',
-          targetType,
-          targetId,
-          payload: { to: newStatus, note: noteText || opsNote.text },
-          visibleTo: ['ops'],
-        });
         forceRefresh();
         setOpsNote({ text: '', decisionReason: '', nextStep: '' });
         setSelectedTarget(null);
@@ -287,9 +271,10 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
   let currentApp: ShipApplication | null = handoffAppId ? getApplicationById(handoffAppId) : null;
 
   if (!currentApp && handoff) {
-    // fallback: most recent application for the submitted route (persisted real ones first)
+    // fallback: most recent application for the submitted route (persisted real ones first, skip seeded demo ids)
     const routeType = handoff.submittedRoute === 'cohort' ? 'founder' : handoff.submittedRoute === 'campus-lead' ? 'campus_lead' : 'scout';
-    currentApp = listApplications({ routeType: routeType as any })[0] || null;
+    const candidates = listApplications({ routeType: routeType as any }).filter((a: any) => a && a.id && !String(a.id).startsWith('app_cohort_') && !String(a.id).startsWith('app_campus_') && !String(a.id).startsWith('app_scout_'));
+    currentApp = candidates[0] || listApplications({ routeType: routeType as any })[0] || null;
   }
 
   // Real identity from handoff or the created application payload
@@ -387,6 +372,7 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
         campus: '#shipos/campus',
         scout: '#shipos/scout',
         ops: '#shipos/ops',
+        firm: '#shipos/firm',
       };
       window.location.hash = map[next];
     }
@@ -600,10 +586,15 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
             <button onClick={() => setShowLeadPanel(true)} className="flex-1 border border-[#FFB800] bg-[#FFB800] text-black py-5 text-xs font-mono tracking-[0.2em]">
               SUBMIT FOUNDER SIGNAL
             </button>
-            <button onClick={handleCampusRecruit} className="flex-1 border border-white/20 py-5 text-xs font-mono tracking-[0.2em] text-white/80 hover:border-[#FFB800]/60">
+            <button onClick={() => setShowRecruitPanel(true)} className="flex-1 border border-white/20 py-5 text-xs font-mono tracking-[0.2em] text-white/80 hover:border-[#FFB800]/60">
               RECRUIT SCOUT ({scoutCount}/4)
             </button>
+            <button onClick={() => setShowWeeklyPanel(true)} className="flex-1 border border-white/20 py-5 text-xs font-mono tracking-[0.2em] text-white/80 hover:border-[#FFB800]/60">
+              LOG WEEKLY CHECK-IN
+            </button>
           </div>
+
+          <div className="text-[10px] font-mono text-white/50">Cell status: {(currentCell?.status as string) || 'forming'} • Scouts: {(currentCell?.scouts?.length || scoutCount)} • Leads: {myLeads.length} • Check-ins logged via panel</div>
 
           <ShiposActivityTimeline events={campusActivities.length ? campusActivities : allActivities} max={5} title="CAMPUS CELL LOG" />
         </div>
@@ -625,6 +616,16 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
           </button>
 
           <div className="text-[10px] font-mono text-white/40">Your sourced leads appear in the Ops review queue (persisted).</div>
+
+          {/* My Sourced Leads - updates on submit, shows lead data */}
+          {myLeads.length > 0 && (
+            <div className="border border-white/10 bg-[#0A0A0A]/70 p-4">
+              <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-2">MY SOURCED LEADS ({myLeads.length})</div>
+              {myLeads.slice(0,4).map((l: any) => (
+                <div key={l.id} className="text-xs py-1 border-t border-white/5 first:border-t-0 text-white/70">{l.founderName} — {l.signal?.slice(0,70)}{l.signal?.length>70?'...':''} <span className="text-white/40">({l.status})</span></div>
+              ))}
+            </div>
+          )}
 
           <ShiposActivityTimeline events={scoutActivities.length ? scoutActivities : allActivities} max={5} title="SCOUT LOG" />
 
@@ -667,9 +668,44 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
           OPEN / REFRESH REVIEW QUEUE
         </button>
 
+        {/* Ops note composer - values attached on status/lead actions via handleOpsDecision */}
+        <div className="p-3 border border-white/10 bg-[#0A0A0A]/60 text-xs mb-2">
+          <div className="font-mono text-[#FFB800]/70 mb-1 tracking-widest">OPS NOTE (included on next status change)</div>
+          <input value={opsNote.text} onChange={e=>setOpsNote({...opsNote, text:e.target.value})} placeholder="Note on decision" className="w-full bg-[#0F0F0F] border border-white/10 p-1 text-xs mb-1" />
+          <div className="grid grid-cols-2 gap-1">
+            <input value={opsNote.decisionReason} onChange={e=>setOpsNote({...opsNote, decisionReason:e.target.value})} placeholder="Reason" className="bg-[#0F0F0F] border border-white/10 p-1 text-xs" />
+            <input value={opsNote.nextStep} onChange={e=>setOpsNote({...opsNote, nextStep:e.target.value})} placeholder="Next step" className="bg-[#0F0F0F] border border-white/10 p-1 text-xs" />
+          </div>
+        </div>
+
         <div>
           <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-3">LOCAL REVIEW QUEUE (PERSISTED REAL SUBMISSIONS)</div>
           <LocalReviewQueue applications={allApps} onRefresh={forceRefresh} />
+        </div>
+
+        {/* Lead queue for Ops status actions (real persisted leads) */}
+        <div>
+          <div className="font-mono text-[10px] text-[#FFB800] tracking-widest mb-3 mt-4">LEAD QUEUE (FOUNDER SIGNALS)</div>
+          {allLeads.length === 0 ? (
+            <div className="border border-white/10 bg-[#0A0A0A]/50 p-4 text-xs text-white/50">No founder leads yet. Submit from Campus or Scout to populate.</div>
+          ) : (
+            <div className="space-y-2">
+              {allLeads.slice(0, 6).map((lead: any) => {
+                const LEAD_STATUS_OPTIONS = ['submitted','needs_research','watch','contacted','founder_meeting','demo_review','investor_ready','passed'] as const;
+                return (
+                  <div key={lead.id} className="border border-white/10 bg-[#0A0A0A]/70 p-3 text-xs">
+                    <div className="flex justify-between"><div className="font-medium">{lead.founderName}</div><div className="text-white/40 font-mono">{lead.status}</div></div>
+                    <div className="text-white/50 truncate mt-0.5">{lead.signal}</div>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {LEAD_STATUS_OPTIONS.map(s => (
+                        <button key={s} onClick={() => handleOpsDecision('lead', lead.id, s)} disabled={lead.status === s} className={`px-2 py-0.5 text-[9px] border font-mono uppercase tracking-widest ${lead.status === s ? 'border-[#FFB800] text-[#FFB800] bg-[#FFB800]/10' : 'border-white/10 text-white/60 hover:border-white/30'}`}>{s.replace(/_/g,' ')}</button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Purposeful: Monthly Delivery Preview in Ops */}
@@ -739,8 +775,62 @@ export const ShiposShell: React.FC<ShiposShellProps> = ({ view: initialView, onE
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={() => setShowProfilePanel(false)}>
           <div className="w-full max-w-sm border border-white/10 bg-[#0A0A0A] p-6" onClick={e => e.stopPropagation()}>
             <div className="font-serif mb-4">Complete Founder Profile</div>
-            <button onClick={handleFounderProfileComplete} className="w-full bg-[#FFB800] text-black py-3 text-xs font-mono tracking-[0.2em]">MARK PROFILE COMPLETE + LOG</button>
-            <button onClick={() => setShowProfilePanel(false)} className="w-full mt-2 border border-white/20 py-2 text-xs">CLOSE</button>
+            <form onSubmit={(e) => {
+              e.preventDefault();
+              const f = e.currentTarget as any;
+              handleCompleteProfile({
+                companyName: f.companyName?.value || undefined,
+                projectDescription: f.projectDescription?.value || undefined,
+                school: f.school?.value || undefined,
+                links: (f.links?.value || '').split(',').map((s:string)=>s.trim()).filter(Boolean),
+              });
+            }} className="space-y-2">
+              <input name="companyName" placeholder="Company name" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" defaultValue={(currentApp?.payload?.companyName as string) || ''} />
+              <input name="projectDescription" placeholder="Project one-liner" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" defaultValue={(currentApp?.payload?.pitch as string) || (currentProfile as any)?.projectDescription || ''} />
+              <input name="school" placeholder="School (optional)" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" defaultValue={(currentApp?.payload?.school as string) || (currentProfile as any)?.school || ''} />
+              <input name="links" placeholder="Links (comma sep)" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" defaultValue={((currentApp?.payload?.profile || currentApp?.payload?.social) as string) || ''} />
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setShowProfilePanel(false)} className="flex-1 border border-white/20 py-2 text-xs">CLOSE</button>
+                <button type="submit" className="flex-1 bg-[#FFB800] text-black py-2 text-xs font-mono tracking-widest">SAVE PROFILE</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Recruit scout form - wired to real handler + record creation */}
+      {showRecruitPanel && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={() => setShowRecruitPanel(false)}>
+          <div className="w-full max-w-sm border border-white/10 bg-[#0A0A0A] p-6" onClick={e => e.stopPropagation()}>
+            <div className="font-serif mb-4">Recruit Scout</div>
+            <form onSubmit={handleRecruitScout} className="space-y-3">
+              <input value={recruitForm.name} onChange={e => setRecruitForm({...recruitForm, name: e.target.value})} placeholder="Scout name" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" required />
+              <input value={recruitForm.email} onChange={e => setRecruitForm({...recruitForm, email: e.target.value})} placeholder="Scout email" type="email" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" required />
+              <input value={recruitForm.roleFocus} onChange={e => setRecruitForm({...recruitForm, roleFocus: e.target.value})} placeholder="Focus (optional)" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" />
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setShowRecruitPanel(false)} className="flex-1 border border-white/20 py-2 text-xs">CANCEL</button>
+                <button type="submit" className="flex-1 bg-[#FFB800] text-black py-2 text-xs font-mono tracking-widest">RECRUIT</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Weekly check-in form */}
+      {showWeeklyPanel && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4" onClick={() => setShowWeeklyPanel(false)}>
+          <div className="w-full max-w-sm border border-white/10 bg-[#0A0A0A] p-6" onClick={e => e.stopPropagation()}>
+            <div className="font-serif mb-4">Weekly Check-In</div>
+            <form onSubmit={handleWeeklyCheckIn} className="space-y-3">
+              <input type="number" value={weeklyForm.conversations} onChange={e => setWeeklyForm({...weeklyForm, conversations: parseInt(e.target.value)||0})} placeholder="Conversations" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" />
+              <input type="number" value={weeklyForm.events} onChange={e => setWeeklyForm({...weeklyForm, events: parseInt(e.target.value)||0})} placeholder="Events / intros" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" />
+              <input value={weeklyForm.strongestSignal} onChange={e => setWeeklyForm({...weeklyForm, strongestSignal: e.target.value})} placeholder="Strongest signal this week" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" required />
+              <input value={weeklyForm.blocker || ''} onChange={e => setWeeklyForm({...weeklyForm, blocker: e.target.value})} placeholder="Blocker (optional)" className="w-full bg-[#0F0F0F] border border-white/10 p-2 text-sm" />
+              <div className="flex gap-2 pt-2">
+                <button type="button" onClick={() => setShowWeeklyPanel(false)} className="flex-1 border border-white/20 py-2 text-xs">CANCEL</button>
+                <button type="submit" className="flex-1 bg-[#FFB800] text-black py-2 text-xs font-mono tracking-widest">LOG CHECK-IN</button>
+              </div>
+            </form>
           </div>
         </div>
       )}
